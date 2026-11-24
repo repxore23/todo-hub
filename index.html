@@ -32,6 +32,8 @@
     </nav>
     <div class="side-label">Courses &amp; categories</div>
     <ul class="cat-list" id="cat-list"></ul>
+    <div class="side-label" title="Short tasks with deadlines more than a week away. They move to Coming up once they're within a week.">Quick wins · get ahead</div>
+    <ul class="quick" id="quick-side"></ul>
     <div class="side-foot">
       <button class="sync" id="sync-btn" type="button"><span class="dot"></span><span id="sync-text">Starting…</span></button>
       <button class="icon-btn" id="settings-btn" type="button" aria-label="Settings"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
@@ -65,25 +67,39 @@
     <section class="view" id="view-dashboard">
       <div class="kpis" id="kpis"></div>
       <div class="grid-2">
-        <article class="card chart-card">
-          <header class="card-head"><h2>Next 14 days</h2><span class="sub">tasks due per day</span></header>
-          <div class="chart-wrap" id="chart-wrap"></div>
+        <article class="card">
+          <header class="card-head"><h2>Week ahead</h2><span class="sub" id="week-sub">what’s due each day</span></header>
+          <div class="week" id="week-strip"></div>
         </article>
         <article class="card">
-          <header class="card-head"><h2>Open by course</h2><span class="sub" id="course-sub"></span></header>
+          <header class="card-head"><h2>Workload by course</h2><span class="sub" id="course-sub"></span></header>
           <div id="course-bars" class="bars"></div>
         </article>
       </div>
       <div class="grid-2 even">
-        <article class="card">
-          <header class="card-head"><h2>Focus</h2><span class="sub">overdue &amp; due today</span></header>
+        <article class="card focus-card">
+          <header class="card-head"><h2>Today’s focus</h2><span class="sub" id="focus-sub">overdue, due today &amp; what you pinned ★</span></header>
           <ul class="tasks" id="focus-list"></ul>
         </article>
         <article class="card">
-          <header class="card-head"><h2>Coming up</h2><span class="sub">next 7 days</span></header>
-          <ul class="tasks" id="soon-list"></ul>
+          <header class="card-head"><h2>Courses</h2><span class="sub">coming up in the next 7 days · ☆ = do it today</span></header>
+          <div class="sections" id="soon-courses"></div>
         </article>
       </div>
+      <div class="grid-2 even">
+        <article class="card">
+          <header class="card-head"><h2>Personal</h2><span class="sub">next 7 days</span></header>
+          <ul class="tasks compact" id="soon-personal"></ul>
+        </article>
+        <article class="card">
+          <header class="card-head"><h2>Admin</h2><span class="sub">next 7 days</span></header>
+          <ul class="tasks compact" id="soon-admin"></ul>
+        </article>
+      </div>
+      <article class="card mobile-only">
+        <header class="card-head"><h2>Quick wins</h2><span class="sub">short tasks you can get ahead on</span></header>
+        <ul class="quick" id="quick-mobile"></ul>
+      </article>
     </section>
 
     <!-- Tasks -->

@@ -40,6 +40,7 @@
   let pending = LS.get('hub.pending', []);
   let filterCat = 'all';
   let editing = null;
+  let resolving = null; // id of the issue whose "Resolve" box is open
   let view = 'dashboard';
   let lastUndo = null;
 
@@ -55,6 +56,12 @@
       priority: normPri(t.priority),
       done: Boolean(t.done),
       doneAt: t.done ? (Number(t.doneAt) || Date.now()) : null,
+      focus: Boolean(t.focus),
+      est: Math.max(0, Math.min(6000, Math.round(Number(t.est) || 0))), // minutes; 0 = guess from the title
+      kind: ['task', 'reminder', 'progress', 'issue'].includes(t.kind) ? t.kind : '', // '' = guess from the title
+      note: String(t.note || '').slice(0, 1000), // e.g. how an issue was resolved; Claude reads it
+      total: Math.max(0, Math.min(200, Math.round(Number(t.total) || 0))), // parts for a progress task; 0 = guess
+      prog: Math.max(0, Math.min(200, Math.round(Number(t.prog) || 0))), // parts finished so far
       createdAt: Number(t.createdAt) || Date.now(),
     };
   }
@@ -151,13 +158,22 @@
       if (action === 'add') {
         const task = newTask({ title: c.title, due: c.due, category: c.category, priority: c.priority });
         if (!task) { skipped.push('an add with no title'); continue; }
+        if (['yes', 'true'].includes(String(c.focus).toLowerCase())) task.focus = true;
+        if (['task', 'reminder', 'progress', 'issue'].includes(c.kind)) task.kind = c.kind;
+        if (Number(c.est) > 0) task.est = Math.round(Number(c.est));
+        if (Number(c.total) > 0) task.total = Math.round(Number(c.total));
+        if (c.note) task.note = String(c.note).slice(0, 1000);
         ops.push({ type: 'add', task }); work.push(task); did.push(`added “${task.title}”`);
         continue;
       }
       const t = findTask(c.task || c.id || c.title, work);
       if (!t) { skipped.push(`couldn't find “${c.task || c.title || '?'}”`); continue; }
       let op = null;
-      if (action === 'complete' || action === 'done') {
+      if (action === 'resolve') {
+        const f = { done: true, doneAt: Date.now(), focus: false };
+        if (c.note) f.note = String(c.note).slice(0, 1000);
+        op = { type: 'patch', id: t.id, fields: f }; did.push(`resolved “${t.title}”`);
+      } else if (action === 'complete' || action === 'done') {
         op = { type: 'patch', id: t.id, fields: { done: true, doneAt: Date.now() } }; did.push(`finished “${t.title}”`);
       } else if (action === 'reopen' || action === 'undone') {
         op = { type: 'patch', id: t.id, fields: { done: false, doneAt: null } }; did.push(`reopened “${t.title}”`);
@@ -169,6 +185,17 @@
         if (c.due === 'none' || c.due === null) f.due = null; else if (isDate(c.due)) f.due = c.due;
         if (c.category) f.category = cleanCat(c.category);
         if (c.priority) f.priority = normPri(c.priority);
+        const fv = String(c.focus === undefined ? '' : c.focus).toLowerCase();
+        if (fv === 'yes' || fv === 'true') f.focus = true; else if (fv === 'no' || fv === 'false') f.focus = false;
+        if (['task', 'reminder', 'progress', 'issue'].includes(c.kind)) f.kind = c.kind;
+        if (Number(c.est) > 0) f.est = Math.round(Number(c.est));
+        if (Number(c.total) > 0) f.total = Math.round(Number(c.total));
+        if (c.note) f.note = String(c.note).slice(0, 1000);
+        if (c.progress !== undefined && c.progress !== '' && !Number.isNaN(Number(c.progress))) {
+          const tot = Number(c.total) > 0 ? Number(c.total) : totalOf(t);
+          f.prog = Math.max(0, Math.round(Number(c.progress)));
+          if (tot && f.prog >= tot) { f.prog = tot; f.done = true; f.doneAt = Date.now(); }
+        }
         if (!Object.keys(f).length) { skipped.push(`nothing to change on “${t.title}”`); continue; }
         op = { type: 'patch', id: t.id, fields: f }; did.push(`updated “${t.title}”`);
       } else { skipped.push(`unknown action “${action}”`); continue; }
@@ -359,14 +386,17 @@
         items: {
           type: 'object',
           properties: {
-            action: { type: 'string', enum: ['add', 'complete', 'reopen', 'update', 'delete'] },
+            action: { type: 'string', enum: ['add', 'complete', 'resolve', 'reopen', 'update', 'delete'] },
             task: { type: 'string' },
             title: { type: 'string' },
             due: { type: 'string' },
             category: { type: 'string' },
             priority: { type: 'string', enum: ['high', 'med', 'low', ''] },
+            focus: { type: 'string', enum: ['yes', 'no', ''] },
+            progress: { type: 'string' },
+            note: { type: 'string' },
           },
-          required: ['action', 'task', 'title', 'due', 'category', 'priority'],
+          required: ['action', 'task', 'title', 'due', 'category', 'priority', 'focus', 'progress', 'note'],
           additionalProperties: false,
         },
       },
@@ -379,7 +409,12 @@
     const recent = Date.now() - 14 * 864e5;
     const list = data.tasks
       .filter((x) => !x.done || (x.doneAt || 0) >= recent)
-      .map((x) => ({ id: x.id, title: x.title, due: x.due, category: x.category, priority: x.priority, done: x.done }));
+      .map((x) => {
+        const o = { id: x.id, title: x.title, due: x.due, category: x.category, priority: x.priority, done: x.done, focus: x.focus, kind: kindOf(x) };
+        if (o.kind === 'progress') { o.progress = x.prog; o.total = totalOf(x); }
+        if (x.note) o.note = x.note;
+        return o;
+      });
     return `You manage a student's personal to-do list. Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long' })}, ${t}.
 
 Current tasks (open ones, plus anything finished in the last 14 days):
@@ -396,6 +431,9 @@ Turn the message into changes to the list.
 - For update: fill only the fields that change and leave the rest "". Use "due": "none" to remove a date.
 - Prefer "complete" when the user finished something; use "delete" only when they cancel or remove it.
 - Resolve relative dates ("tomorrow", "Friday" = the next Friday after today) against today.
+- Kinds: "reminder" tasks are notices (they expire on their own; never complete them). "progress" tasks have parts (e.g. 9 lecture recordings): set "progress" to the number of parts done so far, e.g. "3" (it completes itself at the total); otherwise leave "progress" "". "issue" tasks are missed or missing things: use action "resolve" with a short "note" saying what happened, instead of "complete".
+- Read each task's "note". If a resolved note implies a follow-up (e.g. "got notes, still need to review"), add that follow-up as a new task. Leave "note" "" unless you are resolving.
+- "focus" puts a task on Today's focus (the list of what to work on today): "yes" to add it, "no" to take it off, "" to leave it. Use it when the user says they'll work on something today, or asks to plan today.
 - Never add tasks the user didn't mention.
 "reply": one short sentence saying what changed. If the message is a question about the list, return no changes and answer it in "reply" in at most 4 short plain-text lines.`;
   }
@@ -502,19 +540,23 @@ Turn the message into changes to the list.
     const colors = colorMap();
     const t = todayStr();
     const inFilter = (x) => filterCat === 'all' || x.category === filterCat;
-    const open = data.tasks.filter((x) => !x.done && inFilter(x));
+    const open = data.tasks.filter((x) => !x.done && !expired(x) && inFilter(x));
 
     renderSidebar(cats, colors);
     renderChips(cats, colors);
+    renderQuickWins(colors);
     const dl = $('cats'); dl.textContent = '';
     cats.forEach((c) => { const o = document.createElement('option'); o.value = c; dl.append(o); });
 
     if (view === 'dashboard') {
       renderKpis(open, t);
-      renderChart(open, t);
+      renderWeek(open, t, colors);
       renderBars(colors);
-      fillList($('focus-list'), open.filter((x) => x.due && x.due <= t).sort(byDue), colors, 'Nothing overdue or due today. Nice.');
-      fillList($('soon-list'), open.filter((x) => x.due && x.due > t && x.due <= addDays(t, 7)).sort(byDue), colors, 'Nothing due in the next week.');
+      const rank = (x) => (x.due && x.due < t ? 0 : x.due === t ? 1 : 2);
+      const focus = open.filter((x) => x.focus || (x.due && x.due <= t))
+        .sort((a, b) => rank(a) - rank(b) || byPriority(a, b));
+      fillList($('focus-list'), focus, colors, 'Nothing urgent today. Tap ☆ on any task to work on it today.');
+      renderSections(open.filter((x) => !x.focus && x.due && x.due > t && x.due <= addDays(t, 7)).sort(byDue), colors);
     } else if (view === 'tasks') {
       renderGroups(open, t, colors);
     } else {
@@ -525,14 +567,14 @@ Turn the message into changes to the list.
   function renderSidebar(cats, colors) {
     const ul = $('cat-list'); ul.textContent = '';
     const counts = {};
-    data.tasks.forEach((x) => { if (!x.done) counts[x.category || ''] = (counts[x.category || ''] || 0) + 1; });
+    data.tasks.forEach((x) => { if (!x.done && !expired(x)) counts[x.category || ''] = (counts[x.category || ''] || 0) + 1; });
     const mk = (key, label, color) => {
       const li = el('li'); const b = el('button');
       b.type = 'button';
       b.setAttribute('aria-pressed', String(filterCat === key));
       if (color) { const s = el('span', 'swatch'); s.style.background = color; b.append(s); }
       b.append(el('span', null, label));
-      b.append(el('span', 'n', String(key === 'all' ? data.tasks.filter((x) => !x.done).length : counts[key] || 0)));
+      b.append(el('span', 'n', String(key === 'all' ? data.tasks.filter((x) => !x.done && !expired(x)).length : counts[key] || 0)));
       b.onclick = () => { filterCat = key; render(); };
       li.append(b); ul.append(li);
     };
@@ -582,94 +624,192 @@ Turn the message into changes to the list.
     }
   }
 
-  function renderChart(open, t) {
-    const wrap = $('chart-wrap');
-    const days = Array.from({ length: 14 }, (_, i) => addDays(t, i));
-    const per = days.map((d) => open.filter((x) => x.due === d));
-    const counts = per.map((a) => a.length);
-    const W = 640; const H = 220; const L = 30; const R = 14; const T = 16; const B = 30;
-    const maxV = Math.max(1, ...counts);
-    const step = maxV <= 4 ? 1 : maxV <= 10 ? 2 : 5;
-    const yMax = Math.ceil(maxV / step) * step;
-    const x = (i) => L + (i * (W - L - R)) / 13;
-    const y = (v) => T + (H - T - B) * (1 - v / yMax);
-    let line = `M${x(0)},${y(counts[0])}`;
-    for (let i = 1; i < 14; i++) { const xm = (x(i - 1) + x(i)) / 2; line += ` C${xm},${y(counts[i - 1])} ${xm},${y(counts[i])} ${x(i)},${y(counts[i])}`; }
-    const area = `${line} L${x(13)},${y(0)} L${x(0)},${y(0)} Z`;
-    let g = '';
-    for (let v = 0; v <= yMax; v += step) g += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${L - 10}" y="${y(v) + 3.5}" text-anchor="end">${v}</text>`;
-    let xl = '';
-    for (let i = 0; i < 14; i += 2) {
-      const d = parse(days[i]);
-      const lab = i === 0 ? 'Today' : d.toLocaleDateString(undefined, { weekday: 'short' }) + ' ' + d.getDate();
-      xl += `<text class="axis" x="${x(i)}" y="${H - 8}" text-anchor="middle">${lab}</text>`;
+  // Task kinds: a normal task (checkbox), a reminder (no checkbox, hides itself after its date),
+  // or a progress task like a batch of lectures (a 2/9 counter instead of a checkbox).
+  const RANGE = /\b(?:L|lectures?\s+|ch\.?\s*)?(\d{1,2})\s*[–-]\s*L?(\d{1,2})\b/gi;
+  function autoTotal(x) {
+    const s = x.title;
+    if (!/lecture|recording|video|chapter|\bL\d/i.test(s)) return 0;
+    const m = s.match(/\b(\d+)\s*(recordings|videos)\b/i);
+    if (m) return Number(m[1]);
+    let n = 0;
+    s.replace(RANGE, (all, a, b) => { a = Number(a); b = Number(b); if (b > a && b - a < 30) n += b - a + 1; return ''; });
+    const singles = s.replace(RANGE, '').match(/\blecture\s+\d{1,2}\b/gi);
+    if (singles) n += singles.length;
+    return n;
+  }
+  const totalOf = (x) => (x.total > 0 ? x.total : autoTotal(x));
+  function kindOf(x) {
+    if (x.kind) return x.kind;
+    if (/info only|last day|\breminder\b/i.test(x.title)) return 'reminder';
+    if (/\b(missing|missed)\b/i.test(x.title)) return 'issue';
+    if (totalOf(x) > 1) return 'progress';
+    return 'task';
+  }
+  const expired = (x) => kindOf(x) === 'reminder' && x.due && x.due < todayStr();
+
+  // Time estimates: the task's own "est" (minutes) when set, otherwise a guess from its title.
+  function estMinutes(x) {
+    const kind = kindOf(x);
+    if (kind === 'reminder') return 0;
+    if (kind === 'progress') {
+      const total = totalOf(x); const left = Math.max(0, total - x.prog);
+      return x.est > 0 ? Math.round((x.est * left) / Math.max(1, total)) : left * 60;
     }
-    let dots = '';
-    counts.forEach((v, i) => { if (v) dots += `<circle cx="${x(i)}" cy="${y(v)}" r="4" fill="#0b0b16" stroke="url(#gl)" stroke-width="2"/>`; });
-    let hits = '';
-    const half = (W - L - R) / 26;
-    for (let i = 0; i < 14; i++) hits += `<rect data-i="${i}" x="${x(i) - half}" y="${T}" width="${half * 2}" height="${H - T - B}" fill="transparent" style="pointer-events:all"/>`;
-    wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Tasks due per day over the next 14 days">
-      <defs>
-        <linearGradient id="ga" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8b7bff" stop-opacity=".5"/><stop offset="1" stop-color="#3dd6f5" stop-opacity="0"/></linearGradient>
-        <linearGradient id="gl" gradientUnits="userSpaceOnUse" x1="${L}" y1="0" x2="${W - R}" y2="0"><stop offset="0" stop-color="#8b7bff"/><stop offset="1" stop-color="#3dd6f5"/></linearGradient>
-      </defs>
-      ${g}${xl}
-      <path d="${area}" fill="url(#ga)"/>
-      <path d="${line}" stroke="url(#gl)" stroke-width="2.5" fill="none"/>
-      <line class="hover-line" id="hover-line" x1="0" x2="0" y1="${T}" y2="${H - B}" visibility="hidden"/>
-      ${dots}${hits}
-    </svg>`;
-    const tip = el('div', 'tip'); tip.hidden = true; wrap.append(tip);
-    const svg = wrap.querySelector('svg');
-    const hl = wrap.querySelector('#hover-line');
-    const show = (i) => {
-      tip.textContent = '';
-      tip.append(el('b', null, `${dueLabel(days[i])} · ${counts[i]} due`));
-      if (per[i].length) {
-        const ul = el('ul');
-        per[i].slice(0, 4).forEach((task) => ul.append(el('li', null, task.title)));
-        if (per[i].length > 4) ul.append(el('li', null, `+${per[i].length - 4} more`));
-        tip.append(ul);
-      }
-      tip.style.left = (x(i) / W) * 100 + '%';
-      tip.style.top = (y(counts[i]) / H) * 100 + '%';
-      tip.hidden = false;
-      hl.setAttribute('x1', x(i)); hl.setAttribute('x2', x(i)); hl.setAttribute('visibility', 'visible');
-    };
-    svg.querySelectorAll('rect[data-i]').forEach((r) => {
-      const i = Number(r.dataset.i);
-      r.addEventListener('pointerenter', () => show(i));
-      r.addEventListener('pointerdown', () => show(i));
+    if (x.est > 0) return x.est;
+    const s = x.title.toLowerCase();
+    if (isShift(x)) return 0;
+    if (/info only/.test(s)) return 5;
+    if (/\b(final exam|exam|term test|midterm)\b/.test(s) && !/viewing|conflict/.test(s)) return 300;
+    const rec = s.match(/(\d+)\s*(recordings|lectures|videos)/);
+    if (rec) return Number(rec[1]) * 60;
+    if (/catch[- ]?up|lectures?\b/.test(s)) return 120;
+    if (/quizzes/.test(s)) return 90;
+    if (/quiz/.test(s)) return 30;
+    if (/reflection|tracker|feedback|form|orientation|viewing|registration/.test(s)) return 20;
+    if (/homework|\bhw\b|stemble|achieve|mindtap|data sheet/.test(s)) return 60;
+    if (/\blab\b|lab #?\d/.test(s) && /assignment|report/.test(s)) return 120;
+    if (/\blab\b|lab #?\d/.test(s)) return 180;
+    if (/assignment|podcast|submission|essay|report|phase|create/.test(s)) return 120;
+    return 60;
+  }
+  const fmtMin = (m) => (m >= 60 ? `${Math.round(m / 30) / 2}h` : `${m}m`);
+
+  // Work shifts are Personal tasks with "shift" in the title; the week strip shows them as badges.
+  const isShift = (x) => /\bshifts?\b/i.test(x.title) && String(x.category || '').toLowerCase() === 'personal';
+  function shiftLabel(x) {
+    const m = x.title.match(/\d{1,2}(:\d\d)?\s*(am|pm)?\s*[–-]\s*\d{1,2}(:\d\d)?\s*(am|pm)?/i);
+    return 'Shift' + (m ? ' ' + m[0].replace(/\s+/g, ' ') : '');
+  }
+  function renderWeek(open, t, colors) {
+    const box = $('week-strip'); box.textContent = '';
+    const overdue = open.filter((x) => x.due && x.due < t).length;
+    $('week-sub').textContent = 'what’s due each day' + (overdue ? ` · ${overdue} overdue in Today’s focus` : '');
+    const days = Array.from({ length: 7 }, (_, i) => addDays(t, i));
+    const per = days.map((d) => open.filter((x) => x.due === d));
+    const loads = per.map((a) => a.filter((x) => !isShift(x)).length);
+    const busiest = Math.max(...loads);
+    days.forEach((d, i) => {
+      const shifts = per[i].filter(isShift);
+      const work = per[i].filter((x) => !isShift(x)).sort(byPriority);
+      const busy = busiest >= 3 && loads[i] === busiest;
+      const col = el('div', 'day' + (i === 0 ? ' today' : '') + (busy ? ' busy' : ''));
+      const date = parse(d);
+      const head = el('div', 'day-head');
+      head.append(el('span', 'dow', i === 0 ? 'Today' : date.toLocaleDateString(undefined, { weekday: 'short' })), el('span', 'dnum', String(date.getDate())));
+      col.append(head);
+      col.append(el('div', 'load' + (work.length ? '' : ' free'), work.length ? `${work.length} due${busy ? ' · busiest' : ''}` : 'Free'));
+      shifts.forEach((s) => { const b = el('div', 'shift', shiftLabel(s)); b.title = s.title; col.append(b); });
+      const list = el('div', 'day-items');
+      work.slice(0, 4).forEach((x) => {
+        const it = el('div', 'day-item' + (x.priority === 'high' ? ' hi' : ''), x.title);
+        it.style.setProperty('--c', colors[x.category] || 'var(--muted)');
+        it.title = (x.category ? x.category + ' · ' : '') + x.title;
+        list.append(it);
+      });
+      if (work.length > 4) list.append(el('div', 'day-more', `+${work.length - 4} more`));
+      col.append(list);
+      box.append(col);
     });
-    svg.addEventListener('pointerleave', () => { tip.hidden = true; hl.setAttribute('visibility', 'hidden'); });
-    const overdue = open.filter((x2) => x2.due && x2.due < t).length;
-    wrap.closest('.card').querySelector('.sub').textContent = 'tasks due per day' + (overdue ? ` · plus ${overdue} overdue` : '');
+  }
+
+  const sectionOf = (c) => { c = String(c || '').toLowerCase(); return c === 'personal' ? 'Personal' : c === 'admin' ? 'Admin' : 'Courses'; };
+  function renderSections(items, colors) {
+    // One glass panel each: Courses (grouped by course), Personal, Admin.
+    const courses = items.filter((x) => sectionOf(x.category) === 'Courses');
+    const box = $('soon-courses'); box.textContent = '';
+    if (!courses.length) box.append(el('p', 'empty', 'No course work due in the next week.'));
+    const byCourse = {};
+    courses.forEach((x) => { (byCourse[x.category || 'Other'] = byCourse[x.category || 'Other'] || []).push(x); });
+    Object.keys(byCourse).sort().forEach((c) => {
+      const sec = el('section', 'sec');
+      const lab = el('div', 'course-label'); const s = el('i', 'swatch'); s.style.background = colors[c] || 'var(--muted)';
+      lab.append(s, c, el('span', 'n', String(byCourse[c].length)));
+      const ul = el('ul', 'tasks compact');
+      byCourse[c].forEach((x) => ul.append(row(x, colors, true)));
+      sec.append(lab, ul);
+      box.append(sec);
+    });
+    for (const [name, id] of [['Personal', 'soon-personal'], ['Admin', 'soon-admin']]) {
+      const ul = $(id); ul.textContent = '';
+      const list = items.filter((x) => sectionOf(x.category) === name);
+      if (!list.length) ul.append(el('li', 'empty', `Nothing ${name.toLowerCase()} in the next week.`));
+      list.forEach((x) => ul.append(row(x, colors, true)));
+    }
   }
 
   function renderBars(colors) {
     const box = $('course-bars'); box.textContent = '';
+    // Estimated hours per course: due within 7 days (incl. overdue and today's focus) vs later.
+    const t = todayStr(); const wk = addDays(t, 7);
+    const soon = (x) => x.focus || (x.due && x.due <= wk);
     const rows = categories().map((c) => {
-      const open = data.tasks.filter((x) => !x.done && x.category === c);
-      return { c, n: open.length, hi: open.filter((x) => x.priority === 'high').length };
-    }).filter((r) => r.n).sort((a, b) => b.n - a.n);
-    $('course-sub').textContent = rows.length ? 'bright = high priority' : '';
+      const open = data.tasks.filter((x) => !x.done && x.category === c && !isShift(x) && kindOf(x) !== 'reminder');
+      const week = open.filter(soon);
+      const weekMin = week.reduce((a, x) => a + estMinutes(x), 0);
+      const laterMin = open.filter((x) => !soon(x)).reduce((a, x) => a + estMinutes(x), 0);
+      const next = open.filter((x) => x.due && x.due >= t).sort(byDue)[0];
+      const late = open.filter((x) => x.due && x.due < t).length;
+      return { c, weekMin, laterMin, hi: week.filter((x) => x.priority === 'high').length, next, late, n: open.length };
+    }).filter((r) => r.n).sort((a, b) => b.weekMin - a.weekMin || b.laterMin - a.laterMin);
+    const total = rows.reduce((a, r) => a + r.weekMin, 0);
+    $('course-sub').textContent = rows.length ? `~${fmtMin(total)} due this week · faded = later` : '';
     if (!rows.length) { box.append(el('p', 'empty', 'No open tasks.')); return; }
-    const mx = Math.max(...rows.map((r) => r.n));
+    const mx = Math.max(...rows.map((r) => r.weekMin + r.laterMin), 1);
     for (const r of rows) {
       const b = el('button', 'bar-row');
       b.type = 'button';
-      b.title = `Show ${r.c} tasks`;
+      b.title = `Show ${r.c} tasks (times are estimates; set exact ones by editing a task)`;
       if (filterCat !== 'all' && filterCat !== r.c) b.style.opacity = '.45';
       const name = el('div', 'name'); const sw = el('i', 'swatch'); sw.style.background = colors[r.c];
       name.append(sw, el('span', null, r.c));
-      const count = el('div', 'count', r.hi ? `${r.n} · ${r.hi} high` : String(r.n));
+      const count = el('div', 'count' + (r.weekMin ? ' strong' : ''), r.weekMin ? `~${fmtMin(r.weekMin)} this week` : 'nothing this week');
       const track = el('div', 'track');
-      if (r.hi) { const f = el('div', 'fill hi'); f.style.width = (r.hi / mx) * 100 + '%'; f.style.background = colors[r.c]; track.append(f); }
-      if (r.n - r.hi) { const f = el('div', 'fill rest'); f.style.width = ((r.n - r.hi) / mx) * 100 + '%'; f.style.background = colors[r.c]; track.append(f); }
-      b.append(name, count, track);
+      if (r.weekMin) { const f = el('div', 'fill hi'); f.style.width = (r.weekMin / mx) * 100 + '%'; f.style.background = colors[r.c]; track.append(f); }
+      if (r.laterMin) { const f = el('div', 'fill rest'); f.style.width = (r.laterMin / mx) * 100 + '%'; f.style.background = colors[r.c]; track.append(f); }
+      const bits = [];
+      if (r.late) bits.push(`${r.late} overdue`);
+      if (r.hi) bits.push(`${r.hi} high`);
+      if (r.next) bits.push(`next: ${r.next.due === t ? 'today' : parse(r.next.due).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })}`);
+      if (r.laterMin) bits.push(`~${fmtMin(r.laterMin)} later`);
+      const info = el('div', 'bar-info' + (r.late ? ' late' : ''), bits.join(' · '));
+      b.append(name, count, track, info);
       b.onclick = () => { filterCat = filterCat === r.c ? 'all' : r.c; render(); };
       box.append(b);
+    }
+  }
+
+  // Quick wins: short tasks whose deadline is still more than a week away.
+  // Once a deadline is within 7 days the task shows in Coming up instead, then in Today's focus.
+  function quickWins(t) {
+    return data.tasks.filter((x) => !x.done && !x.focus && !isShift(x) && kindOf(x) !== 'reminder' && x.due && x.due > addDays(t, 7)
+      && estMinutes(x) <= 60 && !/info only/i.test(x.title)
+      && (filterCat === 'all' || x.category === filterCat)).sort(byDue);
+  }
+  function renderQuickWins(colors) {
+    const t = todayStr();
+    const items = quickWins(t);
+    for (const id of ['quick-side', 'quick-mobile']) {
+      const ul = $(id); if (!ul) continue;
+      ul.textContent = '';
+      if (!items.length) { ul.append(el('li', 'empty', 'No quick tasks with far-off deadlines right now.')); continue; }
+      items.slice(0, 12).forEach((x) => {
+        const li = el('li', 'qw');
+        const cb = el('input', 'check'); cb.type = 'checkbox';
+        cb.setAttribute('aria-label', 'Mark done: ' + x.title);
+        cb.onchange = () => commit([{ type: 'patch', id: x.id, fields: { done: true, doneAt: Date.now() } }]);
+        const body = el('div', 'qw-body');
+        body.append(el('div', 'qw-title', x.title));
+        const meta = el('div', 'qw-meta');
+        const s = el('i', 'swatch'); s.style.background = colors[x.category] || 'var(--muted)';
+        meta.append(s, `${parse(x.due).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ~${fmtMin(estMinutes(x))}`);
+        body.append(meta);
+        const pin = el('button', 'pin', '☆'); pin.type = 'button';
+        pin.title = 'Work on this today'; pin.setAttribute('aria-label', 'Work on this today: ' + x.title);
+        pin.onclick = () => commit([{ type: 'patch', id: x.id, fields: { focus: true } }]);
+        li.append(cb, body, pin);
+        ul.append(li);
+      });
     }
   }
 
@@ -720,12 +860,34 @@ Turn the message into changes to the list.
     });
   }
 
-  function row(x, colors) {
-    const li = el('li', 'task' + (x.done ? ' done' : ''));
-    const cb = el('input', 'check');
-    cb.type = 'checkbox'; cb.checked = x.done;
-    cb.setAttribute('aria-label', (x.done ? 'Mark not done: ' : 'Mark done: ') + x.title);
-    cb.onchange = () => commit([{ type: 'patch', id: x.id, fields: x.done ? { done: false, doneAt: null } : { done: true, doneAt: Date.now() } }]);
+  function row(x, colors, compact) {
+    const kind = kindOf(x);
+    const total = totalOf(x);
+    const li = el('li', 'task' + (x.done ? ' done' : '') + (compact ? ' compact' : '') + (kind === 'reminder' ? ' reminder' : ''));
+    let cb;
+    if (kind === 'reminder' && !x.done) {
+      cb = el('span', 'bell');
+      cb.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
+      cb.title = 'Reminder: it goes away by itself after its date';
+    } else if (kind === 'issue' && !x.done) {
+      cb = el('span', 'issue-ic', '!');
+      cb.title = 'Missed or missing: resolve it instead of ticking it off';
+    } else if (kind === 'progress' && !x.done) {
+      cb = el('button', 'prog-btn', `${x.prog}/${total}`);
+      cb.type = 'button';
+      cb.title = 'Tap when you finish one more';
+      cb.setAttribute('aria-label', `${x.prog} of ${total} done. Mark one more done: ${x.title}`);
+      cb.onclick = () => {
+        const n = x.prog + 1;
+        commit([{ type: 'patch', id: x.id, fields: n >= total ? { prog: total, done: true, doneAt: Date.now() } : { prog: n } }]);
+        if (n >= total) toast(`Finished “${x.title}”`);
+      };
+    } else {
+      cb = el('input', 'check');
+      cb.type = 'checkbox'; cb.checked = x.done;
+      cb.setAttribute('aria-label', (x.done ? 'Mark not done: ' : 'Mark done: ') + x.title);
+      cb.onchange = () => commit([{ type: 'patch', id: x.id, fields: x.done ? { done: false, doneAt: null } : { done: true, doneAt: Date.now() } }]);
+    }
     const body = el('div', 'task-body');
     const title = el('button', 'task-title', x.title);
     title.type = 'button'; title.title = 'Edit';
@@ -736,15 +898,66 @@ Turn the message into changes to the list.
       const meta = el('div', 'meta');
       if (x.due) {
         const t = todayStr();
-        meta.append(el('span', 'due' + (!x.done && x.due < t ? ' late' : x.due === t ? ' today' : ''), dueLabel(x.due)));
+        const label = compact && x.due > addDays(t, 1)
+          ? parse(x.due).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })
+          : dueLabel(x.due);
+        meta.append(el('span', 'due' + (!x.done && x.due < t ? ' late' : x.due === t ? ' today' : ''), label));
       }
-      if (x.category) { const c = el('span', 'cat'); const s = el('i', 'swatch'); s.style.background = colors[x.category]; c.append(s, x.category); meta.append(c); }
+      if (x.category && !compact) { const c = el('span', 'cat'); const s = el('i', 'swatch'); s.style.background = colors[x.category]; c.append(s, x.category); meta.append(c); }
       if (x.priority === 'high') meta.append(el('span', 'pri high', 'High'));
-      if (x.priority === 'low') meta.append(el('span', 'pri low', 'Low'));
+      if (x.priority === 'low' && !compact) meta.append(el('span', 'pri low', 'Low'));
+      if (kind === 'progress' && !x.done && !compact) meta.append(el('span', 'est', `~${fmtMin(estMinutes(x))} left`));
       if (meta.childNodes.length) body.append(meta);
+      if (kind === 'progress' && !x.done && total) {
+        const bar = el('div', 'prog-bar'); const fill = el('i');
+        fill.style.width = (Math.min(x.prog, total) / total) * 100 + '%';
+        bar.append(fill); body.append(bar);
+      }
+      if (x.note && (x.done || kind === 'issue')) body.append(el('div', 'note-line', (x.done && kind === 'issue' ? 'Resolved: ' : 'Note: ') + x.note));
+      if (resolving === x.id) body.append(resolveBox(x));
     }
     li.append(cb, body);
+    if (kind === 'issue' && !x.done && resolving !== x.id) {
+      const rb = el('button', 'resolve-btn', 'Resolve'); rb.type = 'button';
+      rb.setAttribute('aria-label', 'Resolve: ' + x.title);
+      rb.onclick = () => { resolving = x.id; render(); const n = document.getElementById('resolve-note'); if (n) n.focus(); };
+      li.append(rb);
+    }
+    if (kind === 'reminder' && !x.done) {
+      const dis = el('button', 'pin', '✕'); dis.type = 'button';
+      dis.title = 'Dismiss reminder'; dis.setAttribute('aria-label', 'Dismiss reminder: ' + x.title);
+      dis.onclick = () => commit([{ type: 'patch', id: x.id, fields: { done: true, doneAt: Date.now() } }]);
+      li.append(dis);
+    } else if (!x.done) {
+      const pin = el('button', 'pin' + (x.focus ? ' on' : ''), x.focus ? '★' : '☆');
+      pin.type = 'button';
+      pin.title = x.focus ? 'Remove from Today’s focus' : 'Work on this today';
+      pin.setAttribute('aria-label', pin.title + ': ' + x.title);
+      pin.setAttribute('aria-pressed', String(x.focus));
+      pin.onclick = () => commit([{ type: 'patch', id: x.id, fields: { focus: !x.focus } }]);
+      li.append(pin);
+    }
     return li;
+  }
+
+  function resolveBox(x) {
+    const f = el('form', 'resolve');
+    const ta = el('textarea'); ta.id = 'resolve-note'; ta.rows = 2; ta.value = x.note;
+    ta.placeholder = 'What happened? (optional) e.g. got the notes from a friend, still need to review them';
+    ta.setAttribute('aria-label', 'Resolution note');
+    const row2 = el('div', 'actions');
+    const ok = el('button', 'btn grad sm', 'Mark resolved'); ok.type = 'submit';
+    const cancel = el('button', 'btn sm', 'Cancel'); cancel.type = 'button';
+    row2.append(ok, cancel);
+    f.append(ta, row2);
+    f.onsubmit = (e) => {
+      e.preventDefault();
+      resolving = null;
+      commit([{ type: 'patch', id: x.id, fields: { done: true, doneAt: Date.now(), focus: false, note: ta.value.trim().slice(0, 1000) } }]);
+      toast('Resolved. Claude can see your note next time it reads your list.');
+    };
+    cancel.onclick = () => { resolving = null; render(); };
+    return f;
   }
 
   function editor(x) {
@@ -755,17 +968,35 @@ Turn the message into changes to the list.
     const pr = el('select'); pr.id = 'edit-pri'; pr.setAttribute('aria-label', 'Priority');
     [['high', 'High'], ['med', 'Medium'], ['low', 'Low']].forEach(([v, l]) => { const o = el('option', null, l); o.value = v; pr.append(o); });
     pr.value = x.priority;
+    const auto = { ...x, kind: '', total: 0, est: 0 };
+    const ki = el('select'); ki.id = 'edit-kind'; ki.setAttribute('aria-label', 'Type');
+    const kindNames = { task: 'Task (checkbox)', reminder: 'Reminder', progress: 'Progress (parts)', issue: 'Issue (resolve)' };
+    [['', `Type: auto (${kindNames[kindOf(auto)]})`], ...Object.entries(kindNames)].forEach(([v, l]) => { const o = el('option', null, l); o.value = v; ki.append(o); });
+    ki.value = x.kind;
+    const es = el('select'); es.id = 'edit-est'; es.setAttribute('aria-label', 'Time needed');
+    [[0, `Time: auto (~${fmtMin(estMinutes(auto))})`], ...[15, 30, 45, 60, 90, 120, 180, 240, 300, 480, 600].map((m) => [m, `Time: ${fmtMin(m)}`])]
+      .forEach(([v, l]) => { const o = el('option', null, l); o.value = String(v); es.append(o); });
+    es.value = String(x.est || 0);
+    const to = el('input'); to.type = 'number'; to.min = '0'; to.id = 'edit-total'; to.value = x.total || '';
+    to.placeholder = `Parts (auto: ${autoTotal(x) || 'none'})`; to.setAttribute('aria-label', 'Number of parts');
+    const pg = el('input'); pg.type = 'number'; pg.min = '0'; pg.id = 'edit-prog'; pg.value = x.prog || '';
+    pg.placeholder = 'Parts done'; pg.setAttribute('aria-label', 'Parts done so far');
+    const no = el('input', 'full'); no.id = 'edit-note'; no.value = x.note; no.placeholder = 'Note for you and Claude (optional)'; no.setAttribute('aria-label', 'Note');
     const actions = el('div', 'actions');
     const save = el('button', 'btn grad sm', 'Save'); save.type = 'submit';
     const cancel = el('button', 'btn sm', 'Cancel'); cancel.type = 'button';
     const del = el('button', 'btn sm danger', 'Delete'); del.type = 'button';
     actions.append(save, cancel, el('span', 'spacer'), del);
-    f.append(ti, du, ca, pr, actions);
+    f.append(ti, du, ca, pr, ki, es, to, pg, no, actions);
     f.onsubmit = (e) => {
       e.preventDefault();
       const title = ti.value.trim(); if (!title) return;
       editing = null;
-      commit([{ type: 'patch', id: x.id, fields: { title: title.slice(0, 300), due: du.value || null, category: cleanCat(ca.value), priority: normPri(pr.value) } }]);
+      commit([{ type: 'patch', id: x.id, fields: {
+        title: title.slice(0, 300), due: du.value || null, category: cleanCat(ca.value), priority: normPri(pr.value),
+        kind: ki.value, est: Number(es.value) || 0, total: Math.max(0, Number(to.value) || 0), prog: Math.max(0, Number(pg.value) || 0),
+        note: no.value.trim().slice(0, 1000),
+      } }]);
     };
     cancel.onclick = () => { editing = null; render(); };
     del.onclick = () => {
@@ -785,6 +1016,7 @@ Turn the message into changes to the list.
       if (a.dataset.view === view) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
     editing = null;
+    resolving = null;
     render();
   }
 
