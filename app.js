@@ -36,7 +36,7 @@
 
   // ---------- state ----------
   const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [] });
-  let data = normalizeData(LS.get('hub.data', null)) || emptyData();
+  let data = emptyData(); // filled from this device's saved copy once the helpers below exist
   let pending = LS.get('hub.pending', []);
   let filterCat = 'all';
   let editing = null;
@@ -76,6 +76,7 @@
     return normalizeTask({ id: newId(), title: f.title, due: f.due, category: f.category, priority: f.priority, done: false, createdAt: Date.now() });
   }
   function saveLocal() { LS.set('hub.data', data); LS.set('hub.pending', pending); }
+  data = normalizeData(LS.get('hub.data', null)) || emptyData();
 
   // ---------- operations ----------
   // op: {type:'add', task} | {type:'patch', id, fields} | {type:'delete', id}
