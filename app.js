@@ -561,6 +561,15 @@ Turn the message into changes to the list.
       const focusMin = focus.reduce((a, x) => a + estMinutes(x), 0);
       $('focus-sub').textContent = focus.length ? `start at the top · ~${fmtMin(focusMin)}` : '';
       fillList($('focus-list'), focus, colors, 'Nothing urgent today. Tap ☆ on any task to work on it today.');
+      // Up next: a preview of tomorrow, plus anything high priority in the next 3 days, for when there's spare time.
+      const inFocus = new Set(focus.map((x) => x.id));
+      const tomorrow = addDays(t, 1);
+      const upNext = open.filter((x) => !inFocus.has(x.id) && !isShift(x) && kindOf(x) !== 'reminder' && x.due
+          && (x.due === tomorrow || (x.priority === 'high' && x.due <= addDays(t, 3))))
+        .sort(byDue).slice(0, 6);
+      $('upnext').hidden = !upNext.length;
+      const ul = $('upnext-list'); ul.textContent = '';
+      upNext.forEach((x) => ul.append(row(x, colors, true)));
       renderSections(open.filter((x) => !x.focus && x.due && x.due > t && x.due <= addDays(t, 7)).sort(byDue), colors);
     } else if (view === 'tasks') {
       renderGroups(open, t, colors);
