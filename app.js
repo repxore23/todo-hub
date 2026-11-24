@@ -35,7 +35,24 @@
   }
 
   // ---------- state ----------
-  const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [] });
+  const APP_VERSION = 'hub-v10';
+  const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [] });
+  const FB_TYPES = ['look', 'feature', 'issue', 'idea'];
+  function normalizeFeedback(f) {
+    if (!f || typeof f !== 'object') return null;
+    const text = String(f.text || '').trim().slice(0, 1500);
+    if (!text) return null;
+    return {
+      id: String(f.id || newId()),
+      at: Number(f.at) || Date.now(),
+      type: FB_TYPES.includes(f.type) ? f.type
+        : /look|aesthetic|design|colou?r|style/i.test(f.type || '') ? 'look'
+        : /bug|problem|issue|broke|error/i.test(f.type || '') ? 'issue'
+        : /function|feature|work/i.test(f.type || '') ? 'feature' : 'idea',
+      source: ['app', 'box', 'chat'].includes(f.source) ? f.source : 'chat',
+      text,
+    };
+  }
   let data = emptyData(); // filled from this device's saved copy once the helpers below exist
   let pending = LS.get('hub.pending', []);
   let filterCat = 'all';
@@ -73,6 +90,7 @@
       app: 'todo-hub', version: 1, updatedAt: Number(d.updatedAt) || 0,
       tasks: tasks.map(normalizeTask).filter(Boolean),
       processedNotes: Array.isArray(d.processedNotes) ? d.processedNotes.slice(-300) : [],
+      feedback: Array.isArray(d.feedback) ? d.feedback.map(normalizeFeedback).filter(Boolean).slice(-200) : [],
     };
   }
   const newId = () => 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -83,6 +101,20 @@
     return normalizeTask({ id: newId(), title: f.title, due: f.due, category: f.category, priority: f.priority, done: false, createdAt: Date.now() });
   }
   function saveLocal() { LS.set('hub.data', data); LS.set('hub.pending', pending); }
+
+  // ---------- usage & problem tracking (this device only, for the feedback report) ----------
+  function stats() { return LS.get('hub.stats', null) || { since: Date.now(), counts: {}, problems: [] }; }
+  function track(key, n = 1) {
+    const s = stats(); s.counts[key] = (s.counts[key] || 0) + n; LS.set('hub.stats', s);
+  }
+  function trackProblem(msg) {
+    const s = stats();
+    const last = s.problems[s.problems.length - 1];
+    if (last && last.msg === msg) { last.times = (last.times || 1) + 1; last.at = Date.now(); }
+    else s.problems.push({ at: Date.now(), msg: String(msg).slice(0, 300), times: 1 });
+    s.problems = s.problems.slice(-40);
+    LS.set('hub.stats', s);
+  }
   data = normalizeData(LS.get('hub.data', null)) || emptyData();
 
   // ---------- operations ----------
@@ -93,6 +125,17 @@
     if (op.type === 'add') { if (i < 0) tasks.push({ ...op.task }); }
     else if (op.type === 'patch') { if (i >= 0) Object.assign(tasks[i], op.fields); }
     else if (op.type === 'delete') { if (i >= 0) tasks.splice(i, 1); }
+  }
+  // Applies an op to a whole data object: task ops go to .tasks, {type:'fb', entry} adds feedback,
+  // {type:'fb-clear', ids} removes feedback entries (after a report has been sent).
+  function applyOpData(d, op) {
+    if (op.type === 'fb') {
+      const e = normalizeFeedback(op.entry);
+      if (e && !d.feedback.some((f) => f.id === e.id)) { d.feedback.push(e); d.feedback = d.feedback.slice(-200); }
+    } else if (op.type === 'fb-clear') {
+      const ids = new Set(op.ids || []);
+      d.feedback = d.feedback.filter((f) => !ids.has(f.id));
+    } else applyOp(d.tasks, op);
   }
   function inverseOps(ops) {
     // Built against the current state, before the ops are applied.
@@ -116,7 +159,7 @@
   }
   function commit(ops) {
     if (!ops.length) return;
-    ops.forEach((op) => applyOp(data.tasks, op));
+    ops.forEach((op) => applyOpData(data, op));
     data.updatedAt = Date.now();
     pending.push(...ops);
     saveLocal();
@@ -149,12 +192,17 @@
     }
     return bestScore >= 0.6 ? best : null;
   }
-  function changesToOps(changes, tasks) {
+  function changesToOps(changes, tasks, source = 'chat') {
     const ops = []; const did = []; const skipped = [];
     const work = tasks.map((t) => ({ ...t }));
     for (const c of Array.isArray(changes) ? changes : []) {
       if (!c || typeof c !== 'object') continue;
       const action = String(c.action || '').toLowerCase();
+      if (action === 'feedback') {
+        const e = normalizeFeedback({ type: c.type || c.category, text: c.text || c.title || c.note, source });
+        if (e) { ops.push({ type: 'fb', entry: e }); did.push(`noted app feedback: “${e.text.slice(0, 60)}${e.text.length > 60 ? '…' : ''}”`); }
+        continue;
+      }
       if (action === 'add') {
         const task = newTask({ title: c.title, due: c.due, category: c.category, priority: c.priority });
         if (!task) { skipped.push('an add with no title'); continue; }
@@ -321,7 +369,7 @@
         const id = await findFile();
         const remote = await readFile(id);
         const sent = pending.slice();
-        sent.forEach((op) => applyOp(remote.tasks, op));
+        sent.forEach((op) => applyOpData(remote, op));
 
         const notes = await readInbox();
         const from = []; const toTrash = [];
@@ -329,14 +377,19 @@
           if (remote.processedNotes.includes(n.id)) { toTrash.push(n.id); continue; }
           if (n.error) {
             const seen = LS.get('hub.badNotes', []);
-            if (!seen.includes(n.id)) { from.push(`couldn't read the note “${n.name}”`); LS.set('hub.badNotes', [...seen, n.id].slice(-50)); }
+            if (!seen.includes(n.id)) {
+              from.push(`couldn't read the note “${n.name}”`); LS.set('hub.badNotes', [...seen, n.id].slice(-50));
+              trackProblem(`Couldn't read a Claude chat note (${n.name})`);
+            }
             continue;
           }
           const res = changesToOps(n.changes, remote.tasks);
-          res.ops.forEach((op) => applyOp(remote.tasks, op));
+          res.ops.forEach((op) => applyOpData(remote, op));
           from.push(...res.did, ...res.skipped.map((s) => 'skipped: ' + s));
           remote.processedNotes.push(n.id);
           toTrash.push(n.id);
+          track('notes.applied');
+          if (res.skipped.length) trackProblem(`A Claude chat note had changes the app skipped: ${res.skipped.join('; ')}`);
         }
         remote.processedNotes = remote.processedNotes.slice(-300);
 
@@ -345,7 +398,7 @@
 
         pending = pending.slice(sent.length);
         data = remote;
-        pending.forEach((op) => applyOp(data.tasks, op));
+        pending.forEach((op) => applyOpData(data, op));
         saveLocal();
         LS.set('hub.lastSync', Date.now());
         setSync('ok', 'Synced just now');
@@ -353,8 +406,11 @@
         if (from.length) toast('From Claude chat: ' + from.join(' · '), 7000);
       } catch (e) {
         if (e && e.code === 'auth') setSync('warn', 'Tap to reconnect Drive');
-        else if (e && e.code === 'corrupt') { setSync('err', 'Task file is unreadable'); showBanner('Your task file in Google Drive couldn’t be read, so nothing was overwritten. Restore an older version of “todo-hub-tasks.json” in Drive (right-click → Manage versions).'); }
-        else setSync('err', navigator.onLine ? 'Sync failed — tap to retry' : 'Offline — changes are kept on this device');
+        else if (e && e.code === 'corrupt') { trackProblem('Task file in Drive was unreadable'); setSync('err', 'Task file is unreadable'); showBanner('Your task file in Google Drive couldn’t be read, so nothing was overwritten. Restore an older version of “todo-hub-tasks.json” in Drive (right-click → Manage versions).'); }
+        else {
+          if (navigator.onLine) trackProblem(`Sync failed${e && e.status ? ` (HTTP ${e.status})` : ''}`);
+          setSync('err', navigator.onLine ? 'Sync failed — tap to retry' : 'Offline — changes are kept on this device');
+        }
       } finally {
         syncing = null;
         if (syncAgain) { syncAgain = false; sync(); }
@@ -386,7 +442,7 @@
         items: {
           type: 'object',
           properties: {
-            action: { type: 'string', enum: ['add', 'complete', 'resolve', 'reopen', 'update', 'delete'] },
+            action: { type: 'string', enum: ['add', 'complete', 'resolve', 'reopen', 'update', 'delete', 'feedback'] },
             task: { type: 'string' },
             title: { type: 'string' },
             due: { type: 'string' },
@@ -432,6 +488,7 @@ Turn the message into changes to the list.
 - Prefer "complete" when the user finished something; use "delete" only when they cancel or remove it.
 - Resolve relative dates ("tomorrow", "Friday" = the next Friday after today) against today.
 - Kinds: "reminder" tasks are notices (they expire on their own; never complete them). "progress" tasks have parts (e.g. 9 lecture recordings): set "progress" to the number of parts done so far, e.g. "3" (it completes itself at the total); otherwise leave "progress" "". "issue" tasks are missed or missing things: use action "resolve" with a short "note" saying what happened, instead of "complete".
+- If the user says anything about the To-Do Hub app itself (how it looks, how it works, a problem, an idea for it), log it with action "feedback": "title" = the feedback in one clear sentence, "category" = "look", "feature", "issue" or "idea", other fields "".
 - When the user says they're behind on lectures, add one catch-up task per course titled like "Catch-up: BIOA01 lectures 4–6" or "Catch-up: CHMA10 lectures (5 recordings)" so the app shows a progress counter.
 - Read each task's "note". If a resolved note implies a follow-up (e.g. "got notes, still need to review"), add that follow-up as a new task. Leave "note" "" unless you are resolving.
 - "focus" puts a task on Today's focus (the list of what to work on today): "yes" to add it, "no" to take it off, "" to leave it. Use it when the user says they'll work on something today, or asks to plan today.
@@ -489,7 +546,8 @@ Turn the message into changes to the list.
     go.disabled = true; go.textContent = 'Thinking…';
     try {
       const out = await callClaude(msg);
-      const res = changesToOps(out.changes, data.tasks);
+      track('box.use');
+      const res = changesToOps(out.changes, data.tasks, 'box');
       const inv = inverseOps(res.ops);
       commit(res.ops);
       lastUndo = inv.length ? inv : null;
@@ -498,6 +556,8 @@ Turn the message into changes to the list.
       showReply(reply, Boolean(lastUndo));
       if (res.ops.length) input.value = '';
     } catch (e) {
+      track('box.error');
+      trackProblem('Claude box: ' + claudeError(e));
       showReply(claudeError(e), false);
     } finally {
       go.disabled = false; go.textContent = 'Update';
@@ -802,7 +862,7 @@ Turn the message into changes to the list.
         body.append(meta);
         const pin = el('button', 'pin', '☆'); pin.type = 'button';
         pin.title = 'Work on this today'; pin.setAttribute('aria-label', 'Work on this today: ' + x.title);
-        pin.onclick = () => commit([{ type: 'patch', id: x.id, fields: { focus: true } }]);
+        pin.onclick = () => { track('quickwin.pin'); commit([{ type: 'patch', id: x.id, fields: { focus: true } }]); };
         li.append(cb, body, pin);
         ul.append(li);
       });
@@ -875,13 +935,14 @@ Turn the message into changes to the list.
       const minus = el('button', 'pc-btn', '−'); minus.type = 'button';
       minus.disabled = x.prog <= 0;
       minus.setAttribute('aria-label', 'One less done: ' + x.title);
-      minus.onclick = () => commit([{ type: 'patch', id: x.id, fields: { prog: Math.max(0, x.prog - 1) } }]);
+      minus.onclick = () => { track('progress.minus'); commit([{ type: 'patch', id: x.id, fields: { prog: Math.max(0, x.prog - 1) } }]); };
       const count = el('span', 'pc-count', `${Math.min(x.prog, total)}/${total}`);
       const full = x.prog >= total;
       const plus = el('button', 'pc-btn' + (full ? ' finish' : ''), full ? '✓' : '+'); plus.type = 'button';
       plus.setAttribute('aria-label', (full ? 'Finish: ' : 'One more done: ') + x.title);
       plus.title = full ? 'All parts done: tap to finish' : 'One more done';
       plus.onclick = () => {
+        track(full ? 'progress.finish' : 'progress.plus');
         if (full) {
           commit([{ type: 'patch', id: x.id, fields: { done: true, doneAt: Date.now() } }]);
           toast(`Finished “${x.title}”`, 6000, [{ type: 'patch', id: x.id, fields: { done: false, doneAt: null } }]);
@@ -943,7 +1004,7 @@ Turn the message into changes to the list.
       pin.title = x.focus ? 'Remove from Today’s focus' : 'Work on this today';
       pin.setAttribute('aria-label', pin.title + ': ' + x.title);
       pin.setAttribute('aria-pressed', String(x.focus));
-      pin.onclick = () => commit([{ type: 'patch', id: x.id, fields: { focus: !x.focus } }]);
+      pin.onclick = () => { track(x.focus ? 'pin.remove' : 'pin.add'); commit([{ type: 'patch', id: x.id, fields: { focus: !x.focus } }]); };
       li.append(pin);
     }
     return li;
@@ -962,6 +1023,7 @@ Turn the message into changes to the list.
     f.onsubmit = (e) => {
       e.preventDefault();
       resolving = null;
+      track('issue.resolve');
       commit([{ type: 'patch', id: x.id, fields: { done: true, doneAt: Date.now(), focus: false, note: ta.value.trim().slice(0, 1000) } }]);
       toast('Resolved. Claude can see your note next time it reads your list.');
     };
@@ -1020,6 +1082,7 @@ Turn the message into changes to the list.
   function setView() {
     const h = location.hash.replace('#', '');
     view = ['dashboard', 'tasks', 'done'].includes(h) ? h : 'dashboard';
+    track('view.' + view);
     ['dashboard', 'tasks', 'done'].forEach((v) => { $('view-' + v).hidden = v !== view; });
     document.querySelectorAll('[data-view]').forEach((a) => {
       if (a.dataset.view === view) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
@@ -1036,7 +1099,7 @@ Turn the message into changes to the list.
     const t = $('toast'); t.textContent = msg; t.hidden = false;
     if (undoOps && undoOps.length) {
       const u = el('button', 'toast-undo', 'Undo'); u.type = 'button';
-      u.onclick = () => { commit(undoOps); t.hidden = true; };
+      u.onclick = () => { track('undo'); commit(undoOps); t.hidden = true; };
       t.append(u);
     }
     clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, ms);
@@ -1068,7 +1131,97 @@ Turn the message into changes to the list.
     toast(ops.length ? `Imported ${ops.length} task${ops.length === 1 ? '' : 's'}.` : 'Nothing new to import.');
   }
 
+  // ---------- feedback log & report ----------
+  const FB_LABEL = { look: 'Looks', feature: 'How it works', issue: 'Problems', idea: 'Ideas' };
+  const SRC_LABEL = { app: 'you', box: 'Claude box', chat: 'Claude chat' };
+  const shortDate = (ms) => new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  function renderFeedbackList() {
+    const ul = $('fb-list'); ul.textContent = '';
+    $('fb-count').textContent = data.feedback.length ? `${data.feedback.length} logged` : '';
+    if (!data.feedback.length) { ul.append(el('li', 'empty', 'Nothing logged yet.')); return; }
+    [...data.feedback].reverse().slice(0, 30).forEach((f) => {
+      const li = el('li', 'fb-item');
+      li.append(el('span', 'fb-tag ' + f.type, FB_LABEL[f.type]), el('span', 'fb-text', f.text), el('span', 'fb-meta', `${shortDate(f.at)} · ${SRC_LABEL[f.source]}`));
+      ul.append(li);
+    });
+  }
+  function openFeedback() {
+    if ($('settings').open) $('settings').close();
+    renderFeedbackList();
+    $('fb-out').hidden = true; $('fb-copy').hidden = true; $('fb-clear').hidden = true;
+    const dlg = $('feedback');
+    if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
+    $('fb-text').focus();
+  }
+  function buildReport() {
+    const s = stats(); const c = s.counts; const t = todayStr();
+    const lines = [];
+    const phone = window.matchMedia('(max-width: 860px)').matches;
+    lines.push('# To-Do Hub feedback report');
+    lines.push(`Made ${new Date().toLocaleString()} · app ${APP_VERSION} · ${phone ? 'phone' : 'desktop'} ${innerWidth}×${innerHeight} · ${navigator.userAgent.match(/(Chrome|Safari|Firefox|Edg)\/[\d.]+/)?.[0] || 'browser'}`);
+    lines.push('');
+    lines.push(`## Feedback (${data.feedback.length})`);
+    if (!data.feedback.length) lines.push('- none logged');
+    for (const type of FB_TYPES) {
+      const list = data.feedback.filter((f) => f.type === type);
+      if (!list.length) continue;
+      lines.push(`### ${FB_LABEL[type]}`);
+      list.forEach((f) => lines.push(`- ${f.text}  _(${shortDate(f.at)}, from ${SRC_LABEL[f.source]})_`));
+    }
+    lines.push('');
+    lines.push(`## Problems the app noticed on this device`);
+    if (!s.problems.length) lines.push('- none');
+    s.problems.slice(-15).forEach((p) => lines.push(`- ${p.msg}${p.times > 1 ? ` (×${p.times})` : ''}, last ${new Date(p.at).toLocaleString()}`));
+    lines.push('');
+    lines.push(`## How the app gets used on this device (since ${shortDate(s.since)})`);
+    const n = (k) => c[k] || 0;
+    lines.push(`- Views: dashboard ${n('view.dashboard')}, tasks ${n('view.tasks')}, done ${n('view.done')}`);
+    lines.push(`- Pins to Today's focus: ${n('pin.add')} (from Quick wins: ${n('quickwin.pin')}), unpins ${n('pin.remove')}`);
+    lines.push(`- Lecture counters: +${n('progress.plus')} / −${n('progress.minus')}, finished ${n('progress.finish')}`);
+    lines.push(`- Issues resolved: ${n('issue.resolve')} · Undo used: ${n('undo')}`);
+    lines.push(`- Claude box: ${n('box.use')} updates, ${n('box.error')} errors · Claude chat notes applied: ${n('notes.applied')}`);
+    lines.push(`- Rain effect: ${LS.get('hub.rain', true) === false ? 'off' : 'on'} · Claude box set up: ${LS.get('hub.apiKey', '') ? 'yes' : 'no'}`);
+    lines.push('');
+    const open = data.tasks.filter((x) => !x.done && !expired(x));
+    const kinds = {}; open.forEach((x) => { const k = kindOf(x); kinds[k] = (kinds[k] || 0) + 1; });
+    const manual = data.tasks.filter((x) => x.est > 0).length;
+    lines.push('## List snapshot');
+    lines.push(`- Open: ${open.length} (${Object.entries(kinds).map(([k, v]) => `${v} ${k}`).join(', ')}) · overdue ${open.filter((x) => x.due && x.due < t && kindOf(x) !== 'reminder').length} · pinned ${open.filter((x) => x.focus).length}`);
+    lines.push(`- Done total: ${data.tasks.filter((x) => x.done).length} · tasks with a time set by hand: ${manual}`);
+    lines.push(`- Categories: ${categories().join(', ')}`);
+    return lines.join('\n');
+  }
+
   // ---------- wire up ----------
+  $('feedback-btn').onclick = openFeedback;
+  $('feedback-open').onclick = openFeedback;
+  $('fb-add').onclick = () => {
+    const text = $('fb-text').value.trim();
+    if (!text) return;
+    const type = (document.querySelector('input[name="fb-type"]:checked') || {}).value || 'idea';
+    commit([{ type: 'fb', entry: { id: newId(), at: Date.now(), type, source: 'app', text } }]);
+    $('fb-text').value = '';
+    renderFeedbackList();
+  };
+  $('fb-report').onclick = () => {
+    const out = $('fb-out');
+    out.value = buildReport(); out.hidden = false;
+    $('fb-copy').hidden = false; $('fb-clear').hidden = !data.feedback.length;
+  };
+  $('fb-copy').onclick = async () => {
+    const out = $('fb-out');
+    try { await navigator.clipboard.writeText(out.value); toast('Report copied. Paste it to Claude Code.'); }
+    catch { out.focus(); out.select(); toast('Press Ctrl+C (or long-press → Copy) to copy the selected report.'); }
+  };
+  $('fb-clear').onclick = () => {
+    const btn = $('fb-clear');
+    if (btn.dataset.armed !== '1') { btn.dataset.armed = '1'; btn.textContent = 'Tap again: clear after sending'; return; }
+    btn.dataset.armed = ''; btn.textContent = 'Clear logged feedback';
+    commit([{ type: 'fb-clear', ids: data.feedback.map((f) => f.id) }]);
+    const s = stats(); s.problems = []; LS.set('hub.stats', s);
+    renderFeedbackList(); btn.hidden = true;
+    toast('Feedback list cleared.');
+  };
   $('ask').addEventListener('submit', runAsk);
   $('ask-close').onclick = () => { $('ask-out').hidden = true; };
   $('undo-btn').onclick = () => {
@@ -1126,6 +1279,7 @@ Turn the message into changes to the list.
   setInterval(updateSyncAge, 30000);
   setInterval(() => { if (!editing) render(); }, 30 * 60000); // date rollover
 
+  track(window.matchMedia('(max-width: 860px)').matches ? 'open.phone' : 'open.desktop');
   setView();
   if (DRIVE_MODE) {
     if (tokenValid()) sync();

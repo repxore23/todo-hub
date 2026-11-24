@@ -37,6 +37,7 @@
     <ul class="quick" id="quick-side"></ul>
     <div class="side-foot">
       <button class="sync" id="sync-btn" type="button"><span class="dot"></span><span id="sync-text">Starting…</span></button>
+      <button class="icon-btn" id="feedback-btn" type="button" aria-label="Feedback about the app" title="Feedback about the app"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
       <button class="icon-btn" id="settings-btn" type="button" aria-label="Settings"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
     </div>
   </aside>
@@ -174,6 +175,11 @@
     </section>
 
     <section class="set-block">
+      <h3>Feedback</h3>
+      <div class="row"><button class="btn sm" type="button" id="feedback-open">Feedback &amp; report</button></div>
+    </section>
+
+    <section class="set-block">
       <h3>Look</h3>
       <label class="toggle" for="rain-toggle"><input type="checkbox" id="rain-toggle"> Rain on the window (turn off to save battery)</label>
     </section>
@@ -186,6 +192,37 @@
         <button class="btn sm" type="button" id="export-btn">Export .json</button>
       </div>
       <p class="hint">Import adds tasks that aren't already in your list. Nothing gets deleted.</p>
+    </section>
+  </form>
+</dialog>
+
+<!-- Feedback about the app itself -->
+<dialog class="modal" id="feedback">
+  <form method="dialog" class="modal-body" id="feedback-form">
+    <header class="modal-head"><h2>Feedback about the app</h2><button class="icon-btn" value="close" aria-label="Close">✕</button></header>
+    <section class="set-block">
+      <p class="hint">Jot down anything about how the app looks or works. Claude chat and the Claude box add to this list too when you mention the app. When you're ready, make a report and paste it to Claude Code to get changes made.</p>
+      <div class="row wrap fb-types" role="radiogroup" aria-label="Kind of feedback">
+        <label><input type="radio" name="fb-type" value="look" checked> Looks</label>
+        <label><input type="radio" name="fb-type" value="feature"> How it works</label>
+        <label><input type="radio" name="fb-type" value="issue"> Problem</label>
+        <label><input type="radio" name="fb-type" value="idea"> Idea</label>
+      </div>
+      <textarea id="fb-text" rows="3" placeholder="e.g. the week strip is hard to read on my phone"></textarea>
+      <div class="row"><button class="btn grad sm" type="button" id="fb-add">Add</button><span class="hint" id="fb-count"></span></div>
+    </section>
+    <section class="set-block">
+      <h3>Logged so far</h3>
+      <ul class="fb-list" id="fb-list"></ul>
+    </section>
+    <section class="set-block">
+      <h3>Report</h3>
+      <div class="row wrap">
+        <button class="btn sm" type="button" id="fb-report">Make report</button>
+        <button class="btn sm" type="button" id="fb-copy" hidden>Copy report</button>
+        <button class="btn sm danger" type="button" id="fb-clear" hidden>Clear logged feedback</button>
+      </div>
+      <textarea id="fb-out" rows="12" readonly hidden></textarea>
     </section>
   </form>
 </dialog>
