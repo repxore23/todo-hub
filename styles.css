@@ -212,6 +212,18 @@ h2 { margin: 0; font-family: var(--font-display); font-size: 15px; font-weight: 
 .dot.hi { box-shadow: 0 0 0 2px rgba(214, 138, 108, 0.55); }
 .shift-strip { width: 100%; text-align: center; font-size: 10px; font-weight: 700; color: var(--amber); background: rgba(212, 178, 106, 0.12); border-radius: 6px; padding: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Today's focus + Coming up sections */
+/* Today's focus zones */
+.zone + .zone { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--stroke); }
+.zone-head { margin: 0 0 2px 4px; font-size: 11.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); display: flex; align-items: baseline; gap: 8px; }
+.zone-head span { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--faint); }
+.zone-head.must { color: var(--pink); }
+.zone-head.must::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--pink); align-self: center; box-shadow: 0 0 8px rgba(214, 138, 108, 0.7); }
+.zone.heads .task { padding: 4px; }
+.empty.all-clear { color: var(--green); padding: 8px 4px; font-size: 13.5px; }
+.zone.heads .task-title { font-size: 13.5px; }
+.due.aim { color: var(--violet-2); font-style: italic; }
+.due.today { color: var(--pink); font-weight: 600; }
+.due.soon { color: var(--amber); }
 .upnext { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--stroke-2); }
 .upnext-head { margin: 0 0 4px 4px; font-size: 11.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .upnext-head span { margin-left: 6px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--faint); }

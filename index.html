@@ -72,9 +72,21 @@
       <div class="hero-grid">
         <article class="card focus-card">
           <header class="card-head"><h2>Today’s focus</h2><span class="sub" id="focus-sub"></span></header>
-          <ul class="tasks" id="focus-list"></ul>
+          <div class="zone" id="zone-due" hidden>
+            <p class="zone-head must" id="due-head">Due today &amp; tomorrow</p>
+            <ul class="tasks" id="focus-due"></ul>
+          </div>
+          <div class="zone" id="zone-work" hidden>
+            <p class="zone-head">Working on <span>no deadline pressure</span></p>
+            <ul class="tasks" id="focus-work"></ul>
+          </div>
+          <div class="zone heads" id="zone-heads" hidden>
+            <p class="zone-head">Heads-up</p>
+            <ul class="tasks compact" id="focus-heads"></ul>
+          </div>
+          <p class="empty" id="focus-empty" hidden>Nothing due and nothing in progress. Tap ☆ on any task to work on it today.</p>
           <div class="upnext" id="upnext" hidden>
-            <p class="upnext-head">Up next <span>if you have time · ☆ pulls it into today</span></p>
+            <p class="upnext-head">Coming soon <span>if you have time · ☆ pulls it into today</span></p>
             <ul class="tasks compact" id="upnext-list"></ul>
           </div>
         </article>

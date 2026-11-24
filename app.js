@@ -35,7 +35,7 @@
   }
 
   // ---------- state ----------
-  const APP_VERSION = 'hub-v10';
+  const APP_VERSION = 'hub-v11';
   const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [] });
   const FB_TYPES = ['look', 'feature', 'issue', 'idea'];
   function normalizeFeedback(f) {
@@ -77,6 +77,7 @@
       est: Math.max(0, Math.min(6000, Math.round(Number(t.est) || 0))), // minutes; 0 = guess from the title
       kind: ['task', 'reminder', 'progress', 'issue'].includes(t.kind) ? t.kind : '', // '' = guess from the title
       note: String(t.note || '').slice(0, 1000), // e.g. how an issue was resolved; Claude reads it
+      dateKind: ['due', 'aim'].includes(t.dateKind) ? t.dateKind : '', // due = real deadline, aim = own target; '' = guess
       total: Math.max(0, Math.min(200, Math.round(Number(t.total) || 0))), // parts for a progress task; 0 = guess
       prog: Math.max(0, Math.min(200, Math.round(Number(t.prog) || 0))), // parts finished so far
       createdAt: Number(t.createdAt) || Date.now(),
@@ -208,6 +209,7 @@
         if (!task) { skipped.push('an add with no title'); continue; }
         if (['yes', 'true'].includes(String(c.focus).toLowerCase())) task.focus = true;
         if (['task', 'reminder', 'progress', 'issue'].includes(c.kind)) task.kind = c.kind;
+        if (['due', 'aim'].includes(c.dateKind)) task.dateKind = c.dateKind;
         if (Number(c.est) > 0) task.est = Math.round(Number(c.est));
         if (Number(c.total) > 0) task.total = Math.round(Number(c.total));
         if (c.note) task.note = String(c.note).slice(0, 1000);
@@ -236,6 +238,7 @@
         const fv = String(c.focus === undefined ? '' : c.focus).toLowerCase();
         if (fv === 'yes' || fv === 'true') f.focus = true; else if (fv === 'no' || fv === 'false') f.focus = false;
         if (['task', 'reminder', 'progress', 'issue'].includes(c.kind)) f.kind = c.kind;
+        if (['due', 'aim'].includes(c.dateKind)) f.dateKind = c.dateKind;
         if (Number(c.est) > 0) f.est = Math.round(Number(c.est));
         if (Number(c.total) > 0) f.total = Math.round(Number(c.total));
         if (c.note) f.note = String(c.note).slice(0, 1000);
@@ -614,23 +617,40 @@ Turn the message into changes to the list.
       renderSummary(open, t);
       renderWeek(open, t, colors);
       renderBars(colors);
-      // Reminders sink to the bottom; real work first, overdue before due-today before pinned.
-      const rank = (x) => (kindOf(x) === 'reminder' ? 3 : x.due && x.due < t ? 0 : x.due === t ? 1 : 2);
-      const focus = open.filter((x) => x.focus || (x.due && x.due <= t))
-        .sort((a, b) => rank(a) - rank(b) || byPriority(a, b));
-      const focusMin = focus.reduce((a, x) => a + estMinutes(x), 0);
-      $('focus-sub').textContent = focus.length ? `start at the top · ~${fmtMin(focusMin)}` : '';
-      fillList($('focus-list'), focus, colors, 'Nothing urgent today. Tap ☆ on any task to work on it today.');
-      // Up next: a preview of tomorrow, plus anything high priority in the next 3 days, for when there's spare time.
-      const inFocus = new Set(focus.map((x) => x.id));
+      // Today's focus in three zones:
+      //  1. Due today / tomorrow: real deadlines only (plus anything overdue).
+      //  2. Working on: things you pinned, own targets (aims) that have arrived, issues.
+      //  3. Heads-up: reminders and work shifts today, in one quiet line each.
       const tomorrow = addDays(t, 1);
-      const upNext = open.filter((x) => !inFocus.has(x.id) && !isShift(x) && kindOf(x) !== 'reminder' && x.due
-          && (x.due === tomorrow || (x.priority === 'high' && x.due <= addDays(t, 3))))
-        .sort(byDue).slice(0, 6);
+      const isNotice = (x) => kindOf(x) === 'reminder' || isShift(x);
+      const dueRank = (x) => (x.due < t ? 0 : x.due === t ? 1 : 2);
+      const dueZone = open.filter((x) => !isNotice(x) && !isAim(x) && x.due && x.due <= tomorrow)
+        .sort((a, b) => dueRank(a) - dueRank(b) || byPriority(a, b));
+      const zoneIds = new Set(dueZone.map((x) => x.id));
+      const workZone = open.filter((x) => !zoneIds.has(x.id) && !isNotice(x)
+          && (x.focus || (isAim(x) && x.due && x.due <= t) || kindOf(x) === 'issue'))
+        .sort((a, b) => Number(b.focus) - Number(a.focus) || (a.due || '9999').localeCompare(b.due || '9999') || byPriority(a, b));
+      workZone.forEach((x) => zoneIds.add(x.id));
+      const heads = open.filter((x) => isNotice(x) && x.due === t);
+      fillZone('zone-due', 'focus-due', dueZone, colors);
+      // Always show the deadline zone, so "nothing due" is a clear, reassuring answer.
+      $('zone-due').hidden = false;
+      $('due-head').hidden = !dueZone.length; // no red heading when there's nothing due
+      if (!dueZone.length) $('focus-due').append(el('li', 'empty all-clear', 'Nothing due today or tomorrow ✓'));
+      fillZone('zone-work', 'focus-work', workZone, colors);
+      fillZone('zone-heads', 'focus-heads', heads, colors, true);
+      $('focus-empty').hidden = dueZone.length + workZone.length + heads.length > 0;
+      const mustMin = dueZone.reduce((a, x) => a + estMinutes(x), 0);
+      const workMin = workZone.reduce((a, x) => a + estMinutes(x), 0);
+      $('focus-sub').textContent = [mustMin ? `~${fmtMin(mustMin)} due` : '', workMin ? `~${fmtMin(workMin)} in progress` : ''].filter(Boolean).join(' · ');
+      // Coming soon: high-priority deadlines 2–3 days out, as a preview for spare time.
+      const upNext = open.filter((x) => !zoneIds.has(x.id) && !isNotice(x) && x.due && x.due > tomorrow
+          && x.due <= addDays(t, 3) && (x.priority === 'high' || x.due === addDays(t, 2)))
+        .sort(byDue).slice(0, 5);
       $('upnext').hidden = !upNext.length;
       const ul = $('upnext-list'); ul.textContent = '';
       upNext.forEach((x) => ul.append(row(x, colors, true)));
-      renderSections(open.filter((x) => !x.focus && x.due && x.due > t && x.due <= addDays(t, 7)).sort(byDue), colors);
+      renderSections(open.filter((x) => !zoneIds.has(x.id) && x.due && x.due > t && x.due <= addDays(t, 7)).sort(byDue), colors);
     } else if (view === 'tasks') {
       renderGroups(open, t, colors);
     } else {
@@ -672,7 +692,7 @@ Turn the message into changes to the list.
   function renderSummary(open, t) {
     const box = $('summary'); box.textContent = '';
     const work = open.filter((x) => kindOf(x) !== 'reminder' && !isShift(x));
-    const overdue = work.filter((x) => x.due && x.due < t).length;
+    const overdue = work.filter(hardLate).length;
     const today = work.filter((x) => x.due === t).length;
     const weekMin = work.filter((x) => x.focus || (x.due && x.due <= addDays(t, 7))).reduce((a, x) => a + estMinutes(x), 0);
     const weekAgo = Date.now() - 7 * 864e5;
@@ -708,6 +728,27 @@ Turn the message into changes to the list.
     return 'task';
   }
   const expired = (x) => kindOf(x) === 'reminder' && x.due && x.due < todayStr();
+  // Due = a real deadline (turns red when missed). Aim = a target you set yourself (never nags).
+  // Catch-ups, study/practice work and issues default to Aim; everything else to Due.
+  function isAim(x) {
+    if (x.dateKind) return x.dateKind === 'aim';
+    const k = kindOf(x);
+    return k === 'progress' || k === 'issue' || /catch[- ]?up|\bstudy\b|review|practice|reading/i.test(x.title);
+  }
+  const hardLate = (x) => !!x.due && x.due < todayStr() && !isAim(x) && kindOf(x) !== 'reminder';
+  const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 864e5);
+  // "~2 a day to finish by Mon" for progress tasks with an aim date.
+  function pacing(x) {
+    if (kindOf(x) !== 'progress' || !x.due) return '';
+    const left = Math.max(0, totalOf(x) - x.prog);
+    if (!left) return '';
+    const t = todayStr();
+    if (x.due < t) return `${left} left · pick a new aim day`;
+    const days = daysBetween(t, x.due) + 1;
+    const per = Math.ceil(left / days);
+    const by = x.due === t ? 'today' : parse(x.due).toLocaleDateString(undefined, { weekday: 'short' });
+    return days === 1 ? `${left} left today` : `~${per} a day to finish by ${by}`;
+  }
 
   // Time estimates: the task's own "est" (minutes) when set, otherwise a guess from its title.
   function estMinutes(x) {
@@ -805,7 +846,7 @@ Turn the message into changes to the list.
       const weekMin = week.reduce((a, x) => a + estMinutes(x), 0);
       const laterMin = open.filter((x) => !soon(x)).reduce((a, x) => a + estMinutes(x), 0);
       const next = open.filter((x) => x.due && x.due >= t).sort(byDue)[0];
-      const late = open.filter((x) => x.due && x.due < t).length;
+      const late = open.filter(hardLate).length;
       return { c, weekMin, laterMin, hi: week.filter((x) => x.priority === 'high').length, next, late, n: open.length };
     }).filter((r) => r.n).sort((a, b) => b.weekMin - a.weekMin || b.laterMin - a.laterMin);
     const total = rows.reduce((a, r) => a + r.weekMin, 0);
@@ -869,6 +910,12 @@ Turn the message into changes to the list.
     }
   }
 
+  function fillZone(zoneId, listId, items, colors, compact) {
+    const zone = $(zoneId); const ul = $(listId);
+    ul.textContent = '';
+    zone.hidden = !items.length;
+    items.forEach((x) => ul.append(row(x, colors, compact)));
+  }
   function fillList(ul, items, colors, emptyText) {
     ul.textContent = '';
     if (!items.length) { ul.append(el('li', 'empty', emptyText)); return; }
@@ -969,14 +1016,26 @@ Turn the message into changes to the list.
       const meta = el('div', 'meta');
       if (x.due) {
         const t = todayStr();
-        const label = compact && x.due > addDays(t, 1)
-          ? parse(x.due).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })
-          : dueLabel(x.due);
-        meta.append(el('span', 'due' + (!x.done && x.due < t ? ' late' : x.due === t ? ' today' : ''), label));
+        const aim = isAim(x) && kind !== 'reminder';
+        const short = compact && x.due > addDays(t, 1);
+        let label = short ? parse(x.due).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' }) : dueLabel(x.due);
+        let cls = 'due';
+        if (kind === 'reminder') {
+          label = x.due === t ? 'today' : label;
+        } else if (aim) {
+          // Own targets: soft wording, never red.
+          cls += ' aim';
+          label = x.done ? label : x.due < t ? 'aim passed' : `aim: ${x.due === t ? 'today' : short ? label : parse(x.due).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })}`;
+        } else if (!x.done) {
+          if (x.due < t) { cls += ' late'; label = `overdue · ${label}`; }
+          else if (x.due === t) { cls += ' today'; label = 'due today'; }
+          else if (x.due === addDays(t, 1)) { cls += ' soon'; label = 'due tomorrow'; }
+        }
+        meta.append(el('span', cls, label));
       }
       if (x.category && !compact) { const c = el('span', 'cat'); const s = el('i', 'swatch'); s.style.background = colors[x.category]; c.append(s, x.category); meta.append(c); }
       // Priority is shown by a pink dot before the title (high) or dimmer text (low), not pills.
-      if (kind === 'progress' && !x.done && !compact) meta.append(el('span', 'est', `~${fmtMin(estMinutes(x))} left`));
+      if (kind === 'progress' && !x.done && !compact) meta.append(el('span', 'est', pacing(x) || `~${fmtMin(estMinutes(x))} left`));
       if (meta.childNodes.length) body.append(meta);
       if (kind === 'progress' && !x.done && total) {
         const bar = el('div', 'prog-bar'); const fill = el('i');
@@ -1052,20 +1111,24 @@ Turn the message into changes to the list.
     to.placeholder = `Parts (auto: ${autoTotal(x) || 'none'})`; to.setAttribute('aria-label', 'Number of parts');
     const pg = el('input'); pg.type = 'number'; pg.min = '0'; pg.id = 'edit-prog'; pg.value = x.prog || '';
     pg.placeholder = 'Parts done'; pg.setAttribute('aria-label', 'Parts done so far');
+    const dk = el('select'); dk.id = 'edit-datekind'; dk.setAttribute('aria-label', 'Kind of date');
+    [['', `Date: auto (${isAim({ ...x, dateKind: '' }) ? 'aim' : 'due'})`], ['due', 'Date: real deadline (due)'], ['aim', 'Date: my own target (aim)']]
+      .forEach(([v, l]) => { const o = el('option', null, l); o.value = v; dk.append(o); });
+    dk.value = x.dateKind;
     const no = el('input', 'full'); no.id = 'edit-note'; no.value = x.note; no.placeholder = 'Note for you and Claude (optional)'; no.setAttribute('aria-label', 'Note');
     const actions = el('div', 'actions');
     const save = el('button', 'btn grad sm', 'Save'); save.type = 'submit';
     const cancel = el('button', 'btn sm', 'Cancel'); cancel.type = 'button';
     const del = el('button', 'btn sm danger', 'Delete'); del.type = 'button';
     actions.append(save, cancel, el('span', 'spacer'), del);
-    f.append(ti, du, ca, pr, ki, es, to, pg, no, actions);
+    f.append(ti, du, dk, ca, pr, ki, es, to, pg, no, actions);
     f.onsubmit = (e) => {
       e.preventDefault();
       const title = ti.value.trim(); if (!title) return;
       editing = null;
       commit([{ type: 'patch', id: x.id, fields: {
         title: title.slice(0, 300), due: du.value || null, category: cleanCat(ca.value), priority: normPri(pr.value),
-        kind: ki.value, est: Number(es.value) || 0, total: Math.max(0, Number(to.value) || 0), prog: Math.max(0, Number(pg.value) || 0),
+        kind: ki.value, dateKind: dk.value, est: Number(es.value) || 0, total: Math.max(0, Number(to.value) || 0), prog: Math.max(0, Number(pg.value) || 0),
         note: no.value.trim().slice(0, 1000),
       } }]);
     };
