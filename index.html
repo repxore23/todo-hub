@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0b16">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>To-Do Hub</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="glow" aria-hidden="true"></div>
+
+<div class="app">
+  <!-- Sidebar (desktop) -->
+  <aside class="side">
+    <div class="brand">
+      <img src="icons/icon.svg" alt="" width="30" height="30">
+      <span>To-Do Hub</span>
+    </div>
+    <nav class="nav" aria-label="Views">
+      <a href="#dashboard" data-view="dashboard"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z"/></svg>Dashboard</a>
+      <a href="#tasks" data-view="tasks"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg>Tasks</a>
+      <a href="#done" data-view="done"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM8 12l3 3 5-6"/></svg>Done</a>
+    </nav>
+    <div class="side-label">Courses &amp; categories</div>
+    <ul class="cat-list" id="cat-list"></ul>
+    <div class="side-foot">
+      <button class="sync" id="sync-btn" type="button"><span class="dot"></span><span id="sync-text">Starting…</span></button>
+      <button class="icon-btn" id="settings-btn" type="button" aria-label="Settings"><svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="top">
+      <div class="top-title">
+        <p class="greet" id="greet">Hello</p>
+        <h1 id="date-label">Today</h1>
+      </div>
+      <form class="ask" id="ask" autocomplete="off">
+        <svg class="spark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l2.2 6.3L20 10l-5.8 1.7L12 18l-2.2-6.3L4 10l5.8-1.7z"/></svg>
+        <input id="ask-input" placeholder="Tell Claude what changed… “finished Lab 5, add dentist Friday”" aria-label="Tell Claude what changed">
+        <button class="btn grad" id="ask-go" type="submit">Update</button>
+      </form>
+    </header>
+    <div class="ask-out" id="ask-out" hidden>
+      <p id="ask-reply"></p>
+      <div class="ask-actions">
+        <button class="btn ghost sm" id="undo-btn" type="button" hidden>Undo</button>
+        <button class="btn ghost sm" id="ask-close" type="button" aria-label="Dismiss">✕</button>
+      </div>
+    </div>
+    <div class="banner" id="banner" hidden></div>
+
+    <div class="chips" id="chips" aria-label="Filter by category"></div>
+
+    <!-- Dashboard -->
+    <section class="view" id="view-dashboard">
+      <div class="kpis" id="kpis"></div>
+      <div class="grid-2">
+        <article class="card chart-card">
+          <header class="card-head"><h2>Next 14 days</h2><span class="sub">tasks due per day</span></header>
+          <div class="chart-wrap" id="chart-wrap"></div>
+        </article>
+        <article class="card">
+          <header class="card-head"><h2>Open by course</h2><span class="sub" id="course-sub"></span></header>
+          <div id="course-bars" class="bars"></div>
+        </article>
+      </div>
+      <div class="grid-2 even">
+        <article class="card">
+          <header class="card-head"><h2>Focus</h2><span class="sub">overdue &amp; due today</span></header>
+          <ul class="tasks" id="focus-list"></ul>
+        </article>
+        <article class="card">
+          <header class="card-head"><h2>Coming up</h2><span class="sub">next 7 days</span></header>
+          <ul class="tasks" id="soon-list"></ul>
+        </article>
+      </div>
+    </section>
+
+    <!-- Tasks -->
+    <section class="view" id="view-tasks" hidden>
+      <form class="add card" id="add" autocomplete="off">
+        <input id="add-title" placeholder="Add a task" aria-label="New task" required>
+        <input id="add-due" type="date" aria-label="Due date">
+        <input id="add-cat" list="cats" placeholder="Category" aria-label="Category">
+        <select id="add-pri" aria-label="Priority">
+          <option value="high">High</option>
+          <option value="med" selected>Medium</option>
+          <option value="low">Low</option>
+        </select>
+        <button class="btn grad" type="submit">Add</button>
+      </form>
+      <datalist id="cats"></datalist>
+      <div id="task-groups" class="groups"></div>
+    </section>
+
+    <!-- Done -->
+    <section class="view" id="view-done" hidden>
+      <article class="card">
+        <header class="card-head"><h2>Finished</h2><span class="sub" id="done-sub"></span></header>
+        <div id="done-list"></div>
+      </article>
+    </section>
+  </main>
+</div>
+
+<!-- Bottom tabs (phone) -->
+<nav class="tabs" aria-label="Views">
+  <a href="#dashboard" data-view="dashboard"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z"/></svg>Home</a>
+  <a href="#tasks" data-view="tasks"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg>Tasks</a>
+  <a href="#done" data-view="done"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM8 12l3 3 5-6"/></svg>Done</a>
+  <button type="button" id="tab-settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8M14 4v6M8 14v6"/></svg>Settings</button>
+</nav>
+
+<!-- Settings -->
+<dialog class="modal" id="settings">
+  <form method="dialog" class="modal-body" id="settings-form">
+    <header class="modal-head"><h2>Settings</h2><button class="icon-btn" value="close" aria-label="Close">✕</button></header>
+
+    <section class="set-block">
+      <h3>Sync</h3>
+      <p class="hint" id="drive-status">Not connected.</p>
+      <div class="row">
+        <button class="btn grad sm" type="button" id="drive-connect">Connect Google Drive</button>
+        <button class="btn ghost sm" type="button" id="drive-disconnect" hidden>Disconnect</button>
+      </div>
+    </section>
+
+    <section class="set-block">
+      <h3>Claude box</h3>
+      <p class="hint">Paste an Anthropic API key to turn on the “Tell Claude” box. It's only used when you press Update, and it's saved on this device only.</p>
+      <label for="api-key">API key</label>
+      <input id="api-key" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+      <label for="api-model">Model</label>
+      <select id="api-model">
+        <option value="claude-haiku-5-5">Claude Haiku 5.5 — cheapest, ~$0.0005 per update</option>
+        <option value="claude-sonnet-5-5">Claude Sonnet 5.5 — smarter, ~$0.01 per update</option>
+      </select>
+      <div class="row"><button class="btn sm" type="button" id="api-save">Save</button><span class="hint" id="api-saved"></span></div>
+    </section>
+
+    <section class="set-block">
+      <h3>Your data</h3>
+      <div class="row wrap">
+        <button class="btn sm" type="button" id="import-seed">Load starter tasks</button>
+        <label class="btn sm file-btn">Import .json<input type="file" id="import-file" accept=".json,application/json" hidden></label>
+        <button class="btn sm" type="button" id="export-btn">Export .json</button>
+      </div>
+      <p class="hint">Import adds tasks that aren't already in your list. Nothing gets deleted.</p>
+    </section>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="config.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="app.js"></script>
+</body>
+</html>
