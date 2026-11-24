@@ -1,4 +1,4 @@
-/* To-Do Hub — app logic.
+﻿/* To-Do Hub — app logic.
    Data lives in one JSON file in Google Drive ("todo-hub-tasks.json").
    Claude chat can request changes by creating "todo-hub-inbox-*.json" notes in Drive;
    the app applies them on sync and moves the notes to the trash. */
@@ -35,7 +35,7 @@
   }
 
   // ---------- state ----------
-  const APP_VERSION = 'hub-v11';
+  const APP_VERSION = 'hub-v12';
   const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [] });
   const FB_TYPES = ['look', 'feature', 'issue', 'idea'];
   function normalizeFeedback(f) {
@@ -58,6 +58,7 @@
   let filterCat = 'all';
   let editing = null;
   let resolving = null; // id of the issue whose "Resolve" box is open
+  let handling = null;  // id of the missed deadline whose "Handle" box is open
   let view = 'dashboard';
   let lastUndo = null;
 
@@ -75,7 +76,10 @@
       doneAt: t.done ? (Number(t.doneAt) || Date.now()) : null,
       focus: Boolean(t.focus),
       est: Math.max(0, Math.min(6000, Math.round(Number(t.est) || 0))), // minutes; 0 = guess from the title
-      kind: ['task', 'reminder', 'progress', 'issue'].includes(t.kind) ? t.kind : '', // '' = guess from the title
+      kind: ['task', 'reminder', 'progress', 'issue', 'shift'].includes(t.kind) ? t.kind : '', // '' = guess from the title
+      off: Boolean(t.off), // shifts: not working that day (requested off, cancelled)
+      repeat: t.repeat === 'weekly' ? 'weekly' : '', // recurring: next one appears when this one is done / its day passes
+      nextMade: Boolean(t.nextMade),
       note: String(t.note || '').slice(0, 1000), // e.g. how an issue was resolved; Claude reads it
       dateKind: ['due', 'aim'].includes(t.dateKind) ? t.dateKind : '', // due = real deadline, aim = own target; '' = guess
       total: Math.max(0, Math.min(200, Math.round(Number(t.total) || 0))), // parts for a progress task; 0 = guess
@@ -595,6 +599,8 @@ Turn the message into changes to the list.
   }
 
   function render() {
+    const rops = recurringOps();
+    if (rops.length) { commit(rops); return; } // commit re-renders; nextMade stops this repeating
     const now = new Date();
     const h = now.getHours();
     $('greet').textContent = h < 5 ? 'Up late' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
@@ -722,20 +728,22 @@ Turn the message into changes to the list.
   const totalOf = (x) => (x.total > 0 ? x.total : autoTotal(x));
   function kindOf(x) {
     if (x.kind) return x.kind;
+    if (isShift(x)) return 'shift';
     if (/info only|last day|\breminder\b/i.test(x.title)) return 'reminder';
     if (/\b(missing|missed)\b/i.test(x.title)) return 'issue';
     if (totalOf(x) > 1) return 'progress';
     return 'task';
   }
-  const expired = (x) => kindOf(x) === 'reminder' && x.due && x.due < todayStr();
+  // Reminders and shifts are events: once their day has passed they quietly disappear.
+  const expired = (x) => ['reminder', 'shift'].includes(kindOf(x)) && x.due && x.due < todayStr();
   // Due = a real deadline (turns red when missed). Aim = a target you set yourself (never nags).
   // Catch-ups, study/practice work and issues default to Aim; everything else to Due.
   function isAim(x) {
     if (x.dateKind) return x.dateKind === 'aim';
     const k = kindOf(x);
-    return k === 'progress' || k === 'issue' || /catch[- ]?up|\bstudy\b|review|practice|reading/i.test(x.title);
+    return k === 'progress' || k === 'issue' || /catch[- ]?up|\bstudy(ing)?\b(?!\s*tracker)|\breview\b(?!\s*(form|quiz|assignment))|practice|reading/i.test(x.title);
   }
-  const hardLate = (x) => !!x.due && x.due < todayStr() && !isAim(x) && kindOf(x) !== 'reminder';
+  const hardLate = (x) => !x.done && !!x.due && x.due < todayStr() && !isAim(x) && !['reminder', 'shift'].includes(kindOf(x));
   const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 864e5);
   // "~2 a day to finish by Mon" for progress tasks with an aim date.
   function pacing(x) {
@@ -743,7 +751,7 @@ Turn the message into changes to the list.
     const left = Math.max(0, totalOf(x) - x.prog);
     if (!left) return '';
     const t = todayStr();
-    if (x.due < t) return `${left} left · pick a new aim day`;
+    if (x.due <= t) return `${left} left`;
     const days = daysBetween(t, x.due) + 1;
     const per = Math.ceil(left / days);
     const by = x.due === t ? 'today' : parse(x.due).toLocaleDateString(undefined, { weekday: 'short' });
@@ -778,7 +786,7 @@ Turn the message into changes to the list.
   const fmtMin = (m) => (m >= 60 ? `${Math.round(m / 30) / 2}h` : `${m}m`);
 
   // Work shifts are Personal tasks with "shift" in the title; the week strip shows them as badges.
-  const isShift = (x) => /\bshifts?\b/i.test(x.title) && String(x.category || '').toLowerCase() === 'personal';
+  const isShift = (x) => x.kind === 'shift' || (!x.kind && /\bshifts?\b/i.test(x.title) && String(x.category || '').toLowerCase() === 'personal');
   function shiftLabel(x) {
     const m = x.title.match(/\d{1,2}(:\d\d)?\s*(am|pm)?\s*[–-]\s*\d{1,2}(:\d\d)?\s*(am|pm)?/i);
     return 'Shift' + (m ? ' ' + m[0].replace(/\s+/g, ' ') : '');
@@ -805,7 +813,10 @@ Turn the message into changes to the list.
         dots.append(dot);
       });
       col.append(dots);
-      if (shifts.length) col.append(el('span', 'shift-strip', shiftLabel(shifts[0]).replace('Shift ', '')));
+      if (shifts.length) {
+        const s0 = shifts[0];
+        col.append(el('span', 'shift-strip' + (s0.off ? ' off' : ''), s0.off ? 'day off' : shiftLabel(s0).replace('Shift ', '')));
+      }
       box.append(col);
     });
   }
@@ -967,9 +978,14 @@ Turn the message into changes to the list.
     const kind = kindOf(x);
     const total = totalOf(x);
     const li = el('li', 'task' + (x.done ? ' done' : '') + (compact ? ' compact' : '') + (kind === 'reminder' ? ' reminder' : '')
+      + (kind === 'shift' ? ' shift' + (x.off ? ' off' : '') : '')
       + (x.priority === 'high' ? ' hi' : x.priority === 'low' ? ' lo' : '') + (x.focus ? ' pinned' : ''));
     let cb;
-    if (kind === 'reminder' && !x.done) {
+    if (kind === 'shift') {
+      cb = el('span', 'bell');
+      cb.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+      cb.title = x.off ? 'Day off' : 'Work shift: it goes away by itself after the day';
+    } else if (kind === 'reminder' && !x.done) {
       cb = el('span', 'bell');
       cb.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
       cb.title = 'Reminder: it goes away by itself after its date';
@@ -1020,18 +1036,34 @@ Turn the message into changes to the list.
         const short = compact && x.due > addDays(t, 1);
         let label = short ? parse(x.due).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' }) : dueLabel(x.due);
         let cls = 'due';
-        if (kind === 'reminder') {
+        if (kind === 'shift') {
+          label = x.off ? `day off · ${label}` : label;
+        } else if (kind === 'reminder') {
           label = x.due === t ? 'today' : label;
         } else if (aim) {
           // Own targets: soft wording, never red.
           cls += ' aim';
-          label = x.done ? label : x.due < t ? 'aim passed' : `aim: ${x.due === t ? 'today' : short ? label : parse(x.due).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })}`;
+          // An aim that's today or already past just means "work on it today": no "passed", no nagging.
+          label = x.done ? label : x.due <= t ? 'aim for today'
+            : `aim for ${x.due === addDays(t, 1) ? 'tomorrow' : parse(x.due).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })}`;
         } else if (!x.done) {
           if (x.due < t) { cls += ' late'; label = `overdue · ${label}`; }
           else if (x.due === t) { cls += ' today'; label = 'due today'; }
           else if (x.due === addDays(t, 1)) { cls += ' soon'; label = 'due tomorrow'; }
         }
-        meta.append(el('span', cls, label));
+        // Tap the date to change it (or switch deadline/target) without opening the editor.
+        if (!x.done && kind !== 'shift') {
+          const chip = el('button', cls + ' date-chip', label); chip.type = 'button';
+          chip.title = 'Change date';
+          chip.setAttribute('aria-label', `Change date (${label}): ${x.title}`);
+          chip.onclick = (e) => { e.stopPropagation(); openDateMenu(x, chip); };
+          meta.append(chip);
+        } else meta.append(el('span', cls, label));
+      } else if (!x.done && kind !== 'shift' && !compact) {
+        const chip = el('button', 'due date-chip add-date', '+ date'); chip.type = 'button';
+        chip.setAttribute('aria-label', 'Add a date: ' + x.title);
+        chip.onclick = (e) => { e.stopPropagation(); openDateMenu(x, chip); };
+        meta.append(chip);
       }
       if (x.category && !compact) { const c = el('span', 'cat'); const s = el('i', 'swatch'); s.style.background = colors[x.category]; c.append(s, x.category); meta.append(c); }
       // Priority is shown by a pink dot before the title (high) or dimmer text (low), not pills.
@@ -1042,10 +1074,30 @@ Turn the message into changes to the list.
         fill.style.width = (Math.min(x.prog, total) / total) * 100 + '%';
         bar.append(fill); body.append(bar);
       }
-      if (x.note && (x.done || kind === 'issue')) body.append(el('div', 'note-line', (x.done && kind === 'issue' ? 'Resolved: ' : 'Note: ') + x.note));
+      if (x.note) body.append(el('div', 'note-line', (x.done && kind === 'issue' ? 'Resolved: ' : '') + x.note));
       if (resolving === x.id) body.append(resolveBox(x));
+      if (handling === x.id) body.append(handleBox(x));
     }
     li.append(cb, body);
+    if (hardLate(x) && handling !== x.id) {
+      const hb = el('button', 'resolve-btn', 'Handle'); hb.type = 'button';
+      hb.title = 'Missed deadline: submitted late, got an extension, or skipping it';
+      hb.setAttribute('aria-label', 'Handle missed deadline: ' + x.title);
+      hb.onclick = () => { handling = x.id; render(); };
+      li.append(hb);
+    }
+    if (kind === 'shift') {
+      const off = el('button', 'resolve-btn' + (x.off ? ' undo' : ''), x.off ? 'Working' : 'Day off'); off.type = 'button';
+      off.title = x.off ? 'I am working this shift after all' : 'Not working this day (requested off, cancelled…)';
+      off.setAttribute('aria-label', off.title + ': ' + x.title);
+      off.onclick = () => {
+        track(x.off ? 'shift.on' : 'shift.off');
+        commit([{ type: 'patch', id: x.id, fields: { off: !x.off } }]);
+        if (!x.off) toast('Marked as a day off.', 5000, [{ type: 'patch', id: x.id, fields: { off: false } }]);
+      };
+      li.append(off);
+      return li;
+    }
     if (kind === 'issue' && !x.done && resolving !== x.id) {
       const rb = el('button', 'resolve-btn', 'Resolve'); rb.type = 'button';
       rb.setAttribute('aria-label', 'Resolve: ' + x.title);
@@ -1068,6 +1120,91 @@ Turn the message into changes to the list.
     }
     return li;
   }
+
+  // A missed real deadline: say what actually happened instead of just ticking it or leaving it red.
+  function handleBox(x) {
+    const f = el('form', 'resolve');
+    const opts = el('div', 'handle-opts');
+    const choices = [['late', 'Submitted late'], ['ext', 'Got an extension'], ['skip', 'Skipping it'], ['other', 'Something else']];
+    let pick = 'late';
+    const dateIn = el('input'); dateIn.type = 'date'; dateIn.id = 'handle-date'; dateIn.hidden = true; dateIn.setAttribute('aria-label', 'New due date');
+    choices.forEach(([v, l]) => {
+      const b = el('button', 'chip' + (v === pick ? ' on' : ''), l); b.type = 'button';
+      b.setAttribute('aria-pressed', String(v === pick));
+      b.onclick = () => {
+        pick = v;
+        opts.querySelectorAll('.chip').forEach((c) => { c.classList.toggle('on', c === b); c.setAttribute('aria-pressed', String(c === b)); });
+        dateIn.hidden = v !== 'ext';
+        ta.placeholder = v === 'other' ? 'What happened? Claude will read this.' : 'Anything to add? (optional)';
+        if (v === 'ext') dateIn.focus();
+      };
+      opts.append(b);
+    });
+    const ta = el('textarea'); ta.id = 'handle-note'; ta.rows = 2; ta.value = x.note;
+    ta.placeholder = 'Anything to add? (optional)'; ta.setAttribute('aria-label', 'Note');
+    const row2 = el('div', 'actions');
+    const ok = el('button', 'btn grad sm', 'Save'); ok.type = 'submit';
+    const cancel = el('button', 'btn sm', 'Cancel'); cancel.type = 'button';
+    row2.append(ok, cancel);
+    f.append(opts, dateIn, ta, row2);
+    f.onsubmit = (e) => {
+      e.preventDefault();
+      const extra = ta.value.trim();
+      const join = (a) => [a, extra].filter(Boolean).join(' — ').slice(0, 1000);
+      let fields;
+      if (pick === 'ext') {
+        if (!isDate(dateIn.value)) { dateIn.focus(); return; }
+        fields = { due: dateIn.value, dateKind: 'due', note: join(`Extension to ${parse(dateIn.value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`) };
+      } else if (pick === 'late') fields = { done: true, doneAt: Date.now(), focus: false, note: join('Submitted late') };
+      else if (pick === 'skip') fields = { done: true, doneAt: Date.now(), focus: false, note: join('Skipped') };
+      else {
+        if (!extra) { ta.focus(); return; }
+        fields = { kind: 'issue', note: extra }; // stays open as an issue to resolve, with the explanation attached
+      }
+      handling = null;
+      track('late.' + pick);
+      const prev = {}; Object.keys(fields).forEach((k) => { prev[k] = x[k]; });
+      commit([{ type: 'patch', id: x.id, fields }]);
+      toast('Saved. Claude can see the note.', 5000, [{ type: 'patch', id: x.id, fields: prev }]);
+    };
+    cancel.onclick = () => { handling = null; render(); };
+    return f;
+  }
+
+  // Tap a date: quick choices instead of the full editor.
+  function openDateMenu(x, anchor) {
+    closeDateMenu();
+    const t = todayStr();
+    const menu = el('div', 'date-menu'); menu.id = 'date-menu'; menu.setAttribute('role', 'menu');
+    const set = (fields) => { closeDateMenu(); commit([{ type: 'patch', id: x.id, fields }]); };
+    const nextMon = addDays(t, ((8 - parse(t).getDay()) % 7) || 7);
+    const base = x.due && x.due > t ? x.due : t;
+    [['Today', t], ['Tomorrow', addDays(t, 1)], ['+1 day', addDays(base, 1)], ['Next week (Mon)', nextMon]].forEach(([l, d]) => {
+      const b = el('button', null, l); b.type = 'button'; b.setAttribute('role', 'menuitem');
+      b.onclick = () => set({ due: d });
+      menu.append(b);
+    });
+    const pick = el('input'); pick.type = 'date'; pick.value = x.due || ''; pick.setAttribute('aria-label', 'Pick a date');
+    pick.onchange = () => { if (isDate(pick.value)) set({ due: pick.value }); };
+    menu.append(pick);
+    if (x.due) { const nd = el('button', null, 'No date'); nd.type = 'button'; nd.onclick = () => set({ due: null }); menu.append(nd); }
+    const aim = isAim(x);
+    const sw = el('button', 'switch', aim ? 'Make it a real deadline' : 'Just my own target');
+    sw.type = 'button'; sw.title = aim ? 'Turns red if missed' : 'Never turns red';
+    sw.onclick = () => set({ dateKind: aim ? 'due' : 'aim' });
+    menu.append(sw);
+    document.body.append(menu);
+    const r = anchor.getBoundingClientRect();
+    const w = 210;
+    menu.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left)) + 'px';
+    const below = r.bottom + 6;
+    menu.style.top = (below + 260 > innerHeight ? Math.max(8, r.top - 266) : below) + 'px';
+    setTimeout(() => document.addEventListener('click', outsideClose), 0);
+    menu.querySelector('button').focus();
+  }
+  function outsideClose(e) { const m = $('date-menu'); if (m && !m.contains(e.target)) closeDateMenu(); }
+  function closeDateMenu() { const m = $('date-menu'); if (m) m.remove(); document.removeEventListener('click', outsideClose); }
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDateMenu(); });
 
   function resolveBox(x) {
     const f = el('form', 'resolve');
@@ -1115,20 +1252,23 @@ Turn the message into changes to the list.
     [['', `Date: auto (${isAim({ ...x, dateKind: '' }) ? 'aim' : 'due'})`], ['due', 'Date: real deadline (due)'], ['aim', 'Date: my own target (aim)']]
       .forEach(([v, l]) => { const o = el('option', null, l); o.value = v; dk.append(o); });
     dk.value = x.dateKind;
+    const rp = el('select'); rp.id = 'edit-repeat'; rp.setAttribute('aria-label', 'Repeat');
+    [['', 'Repeat: no'], ['weekly', 'Repeat: every week']].forEach(([v, l]) => { const o = el('option', null, l); o.value = v; rp.append(o); });
+    rp.value = x.repeat;
     const no = el('input', 'full'); no.id = 'edit-note'; no.value = x.note; no.placeholder = 'Note for you and Claude (optional)'; no.setAttribute('aria-label', 'Note');
     const actions = el('div', 'actions');
     const save = el('button', 'btn grad sm', 'Save'); save.type = 'submit';
     const cancel = el('button', 'btn sm', 'Cancel'); cancel.type = 'button';
     const del = el('button', 'btn sm danger', 'Delete'); del.type = 'button';
     actions.append(save, cancel, el('span', 'spacer'), del);
-    f.append(ti, du, dk, ca, pr, ki, es, to, pg, no, actions);
+    f.append(ti, du, dk, ca, pr, ki, es, rp, to, pg, no, actions);
     f.onsubmit = (e) => {
       e.preventDefault();
       const title = ti.value.trim(); if (!title) return;
       editing = null;
       commit([{ type: 'patch', id: x.id, fields: {
         title: title.slice(0, 300), due: du.value || null, category: cleanCat(ca.value), priority: normPri(pr.value),
-        kind: ki.value, dateKind: dk.value, est: Number(es.value) || 0, total: Math.max(0, Number(to.value) || 0), prog: Math.max(0, Number(pg.value) || 0),
+        kind: ki.value, dateKind: dk.value, repeat: rp.value, est: Number(es.value) || 0, total: Math.max(0, Number(to.value) || 0), prog: Math.max(0, Number(pg.value) || 0),
         note: no.value.trim().slice(0, 1000),
       } }]);
     };
@@ -1152,6 +1292,8 @@ Turn the message into changes to the list.
     });
     editing = null;
     resolving = null;
+    handling = null;
+    closeDateMenu();
     render();
   }
 
@@ -1192,6 +1334,100 @@ Turn the message into changes to the list.
     const ops = incoming.filter((t) => !have.has(t.id)).map((task) => ({ type: 'add', task }));
     commit(ops);
     toast(ops.length ? `Imported ${ops.length} task${ops.length === 1 ? '' : 's'}.` : 'Nothing new to import.');
+  }
+
+  // ---------- natural quick add ----------
+  // "lab report fri high BIOA01" · "study ch 7 aim sun 2h" · "stemble hw every mon" · "dentist dec 3 #Personal"
+  const WD = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const MON = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  function weekdayOnOrAfter(t, name) {
+    const want = WD.indexOf(name.slice(0, 3).toLowerCase());
+    const d = parse(t); const diff = (want - d.getDay() + 7) % 7;
+    return addDays(t, diff);
+  }
+  function parseQuick(raw) {
+    const t = todayStr();
+    const out = { title: '', due: null, category: '', priority: 'med', dateKind: '', est: 0, repeat: '' };
+    let s = ` ${String(raw || '').trim()} `;
+    const take = (re, fn) => { s = s.replace(re, (...m) => { fn(...m); return ' '; }); };
+    const DATEWORD = '(?=\\s*(today|tonight|tomorrow|tmrw?|next|in\\s+\\d|mon|tue|wed|thu|fri|sat|sun|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\\d{1,2}[/ ]))';
+    take(/\b(?:every|each)\s+(mon|tue|wed|thu|fri|sat|sun)[a-z]*\b/i, (_, d) => { out.repeat = 'weekly'; out.due = weekdayOnOrAfter(t, d); });
+    take(/\bweekly\b/i, () => { out.repeat = 'weekly'; });
+    take(new RegExp(`\\b(aim(?:\\s+for)?|by)\\s+${DATEWORD}`, 'i'), () => { out.dateKind = 'aim'; });
+    take(new RegExp(`\\bdue\\s+${DATEWORD}`, 'i'), () => { out.dateKind = 'due'; });
+    if (!out.due) {
+      take(/\b(today|tonight)\b/i, () => { out.due = t; });
+      take(/\b(tomorrow|tmrw?)\b/i, () => { out.due = addDays(t, 1); });
+      take(/\bnext week\b/i, () => { out.due = weekdayOnOrAfter(addDays(t, 1), 'mon'); });
+      take(/\bin\s+(\d{1,2})\s+days?\b/i, (_, n) => { out.due = addDays(t, Number(n)); });
+      take(/\bnext\s+(mon|tue|wed|thu|fri|sat|sun)[a-z]*\b/i, (_, d) => { out.due = addDays(weekdayOnOrAfter(t, d), 7); });
+      take(/\b(mon|tue|wed|thu|fri|sat|sun)(?:day|s|sday|nesday|rsday|urday)?\b/i, (_, d) => { if (!out.due) out.due = weekdayOnOrAfter(t, d); });
+      const md = (m, d) => {
+        const now = new Date(); let y = now.getFullYear();
+        let iso = `${y}-${pad(m)}-${pad(d)}`;
+        if (iso < addDays(t, -30)) iso = `${y + 1}-${pad(m)}-${pad(d)}`;
+        if (!out.due && m >= 1 && m <= 12 && d >= 1 && d <= 31) out.due = iso;
+      };
+      take(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b/i, (_, mo, d) => md(MON.indexOf(mo.toLowerCase()) + 1, Number(d)));
+      take(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i, (_, d, mo) => md(MON.indexOf(mo.toLowerCase()) + 1, Number(d)));
+      take(/\b(\d{1,2})\/(\d{1,2})\b/, (_, m, d) => md(Number(m), Number(d)));
+    }
+    take(/\b(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours?)\b/i, (_, n) => { out.est = Math.round(Number(n) * 60); });
+    take(/\b(\d+)\s*(?:m|min|mins|minutes)\b/i, (_, n) => { out.est = Number(n); });
+    take(/(^|\s)(?:!+|high|urgent|important)(?=\s)/i, () => { out.priority = 'high'; });
+    take(/(^|\s)low(?:\s+priority)?(?=\s)/i, () => { out.priority = 'low'; });
+    take(/#([\w/-]+)/, (_, c) => { out.category = c; });
+    take(/\b([A-Za-z]{3}[A-Da-d]\d{2})\b/, (_, c) => { if (!out.category) out.category = c.toUpperCase(); });
+    for (const c of categories()) {
+      if (out.category) break;
+      const re = new RegExp(`(^|\\s)${c.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}(?=\\s)`, 'i');
+      if (re.test(s)) { out.category = c; s = s.replace(re, ' '); }
+    }
+    const known = categories().find((c) => c.toLowerCase() === out.category.toLowerCase());
+    if (known) out.category = known;
+    out.title = s.replace(/\s+/g, ' ').trim();
+    return out;
+  }
+  function quickPreview(p, box) {
+    box.textContent = '';
+    if (!p.title) return;
+    const bits = [];
+    if (p.due) bits.push(`${p.dateKind === 'aim' ? 'aim for' : 'due'} ${dueLabel(p.due)}`);
+    if (p.category) bits.push(p.category);
+    if (p.priority !== 'med') bits.push(p.priority === 'high' ? 'high priority' : 'low priority');
+    if (p.est) bits.push(`~${fmtMin(p.est)}`);
+    if (p.repeat) bits.push('repeats weekly');
+    box.append(el('span', 'qp-title', `“${p.title}”`));
+    bits.forEach((b) => box.append(el('span', 'qp-chip', b)));
+  }
+  function quickAdd(text) {
+    const p = parseQuick(text);
+    if (!p.title) return false;
+    const task = newTask({ title: p.title, due: p.due, category: p.category, priority: p.priority });
+    if (p.dateKind) task.dateKind = p.dateKind;
+    if (p.est) task.est = p.est;
+    if (p.repeat) task.repeat = p.repeat;
+    track('quickadd');
+    commit([{ type: 'add', task }]);
+    toast(`Added “${task.title}”${task.due ? ' · ' + dueLabel(task.due) : ''}`, 5000, [{ type: 'delete', id: task.id }]);
+    return true;
+  }
+
+  // ---------- recurring tasks ----------
+  // When a weekly task is done (or a weekly shift's day has passed), the next one appears 7 days later.
+  function recurringOps() {
+    const t = todayStr(); const ops = [];
+    for (const x of data.tasks) {
+      if (x.repeat !== 'weekly' || x.nextMade || !x.due) continue;
+      const finished = x.done || (kindOf(x) === 'shift' && x.due < t);
+      if (!finished) continue;
+      let nd = addDays(x.due, 7);
+      while (nd < t) nd = addDays(nd, 7);
+      const id = x.id.replace(/-r\d{8}$/, '') + '-r' + nd.replace(/-/g, '');
+      ops.push({ type: 'patch', id: x.id, fields: { nextMade: true } });
+      ops.push({ type: 'add', task: normalizeTask({ ...x, id, due: nd, done: false, doneAt: null, prog: 0, off: false, nextMade: false, focus: false, note: '', createdAt: Date.now() }) });
+    }
+    return ops;
   }
 
   // ---------- feedback log & report ----------
@@ -1256,6 +1492,11 @@ Turn the message into changes to the list.
   }
 
   // ---------- wire up ----------
+  $('quick-input').addEventListener('input', (e) => quickPreview(parseQuick(e.target.value), $('quick-preview')));
+  $('quick-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (quickAdd($('quick-input').value)) { $('quick-input').value = ''; $('quick-preview').textContent = ''; }
+  });
   $('feedback-btn').onclick = openFeedback;
   $('feedback-open').onclick = openFeedback;
   $('fb-add').onclick = () => {
@@ -1294,8 +1535,18 @@ Turn the message into changes to the list.
   };
   $('add').addEventListener('submit', (e) => {
     e.preventDefault();
-    const task = newTask({ title: $('add-title').value, due: $('add-due').value, category: $('add-cat').value, priority: $('add-pri').value });
+    // The title is read naturally too ("lab report fri high BIOA01"); the form fields win when filled in.
+    const p = parseQuick($('add-title').value);
+    const task = newTask({
+      title: p.title || $('add-title').value,
+      due: $('add-due').value || p.due,
+      category: $('add-cat').value || p.category,
+      priority: $('add-pri').value !== 'med' ? $('add-pri').value : p.priority,
+    });
     if (!task) return;
+    if (p.dateKind) task.dateKind = p.dateKind;
+    if (p.est) task.est = p.est;
+    if (p.repeat) task.repeat = p.repeat;
     commit([{ type: 'add', task }]);
     $('add-title').value = ''; $('add-due').value = '';
     $('add-title').focus();
