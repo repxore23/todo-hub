@@ -432,6 +432,7 @@ Turn the message into changes to the list.
 - Prefer "complete" when the user finished something; use "delete" only when they cancel or remove it.
 - Resolve relative dates ("tomorrow", "Friday" = the next Friday after today) against today.
 - Kinds: "reminder" tasks are notices (they expire on their own; never complete them). "progress" tasks have parts (e.g. 9 lecture recordings): set "progress" to the number of parts done so far, e.g. "3" (it completes itself at the total); otherwise leave "progress" "". "issue" tasks are missed or missing things: use action "resolve" with a short "note" saying what happened, instead of "complete".
+- When the user says they're behind on lectures, add one catch-up task per course titled like "Catch-up: BIOA01 lectures 4–6" or "Catch-up: CHMA10 lectures (5 recordings)" so the app shows a progress counter.
 - Read each task's "note". If a resolved note implies a follow-up (e.g. "got notes, still need to review"), add that follow-up as a new task. Leave "note" "" unless you are resolving.
 - "focus" puts a task on Today's focus (the list of what to work on today): "yes" to add it, "no" to take it off, "" to leave it. Use it when the user says they'll work on something today, or asks to plan today.
 - Never add tasks the user didn't mention.
@@ -860,20 +861,33 @@ Turn the message into changes to the list.
       cb = el('span', 'issue-ic', '!');
       cb.title = 'Missed or missing: resolve it instead of ticking it off';
     } else if (kind === 'progress' && !x.done) {
-      cb = el('button', 'prog-btn', `${x.prog}/${total}`);
-      cb.type = 'button';
-      cb.title = 'Tap when you finish one more';
-      cb.setAttribute('aria-label', `${x.prog} of ${total} done. Mark one more done: ${x.title}`);
-      cb.onclick = () => {
-        const n = x.prog + 1;
-        commit([{ type: 'patch', id: x.id, fields: n >= total ? { prog: total, done: true, doneAt: Date.now() } : { prog: n } }]);
-        if (n >= total) toast(`Finished “${x.title}”`);
+      // − 3/9 +  ; at the total the + becomes ✓, so finishing is always a deliberate tap.
+      cb = el('div', 'prog-ctl');
+      const minus = el('button', 'pc-btn', '−'); minus.type = 'button';
+      minus.disabled = x.prog <= 0;
+      minus.setAttribute('aria-label', 'One less done: ' + x.title);
+      minus.onclick = () => commit([{ type: 'patch', id: x.id, fields: { prog: Math.max(0, x.prog - 1) } }]);
+      const count = el('span', 'pc-count', `${Math.min(x.prog, total)}/${total}`);
+      const full = x.prog >= total;
+      const plus = el('button', 'pc-btn' + (full ? ' finish' : ''), full ? '✓' : '+'); plus.type = 'button';
+      plus.setAttribute('aria-label', (full ? 'Finish: ' : 'One more done: ') + x.title);
+      plus.title = full ? 'All parts done: tap to finish' : 'One more done';
+      plus.onclick = () => {
+        if (full) {
+          commit([{ type: 'patch', id: x.id, fields: { done: true, doneAt: Date.now() } }]);
+          toast(`Finished “${x.title}”`, 6000, [{ type: 'patch', id: x.id, fields: { done: false, doneAt: null } }]);
+        } else commit([{ type: 'patch', id: x.id, fields: { prog: x.prog + 1 } }]);
       };
+      cb.append(minus, count, plus);
     } else {
       cb = el('input', 'check');
       cb.type = 'checkbox'; cb.checked = x.done;
       cb.setAttribute('aria-label', (x.done ? 'Mark not done: ' : 'Mark done: ') + x.title);
-      cb.onchange = () => commit([{ type: 'patch', id: x.id, fields: x.done ? { done: false, doneAt: null } : { done: true, doneAt: Date.now() } }]);
+      cb.onchange = () => {
+        if (x.done) { commit([{ type: 'patch', id: x.id, fields: { done: false, doneAt: null } }]); return; }
+        commit([{ type: 'patch', id: x.id, fields: { done: true, doneAt: Date.now() } }]);
+        toast(`Done: “${x.title}”`, 5000, [{ type: 'patch', id: x.id, fields: { done: false, doneAt: null } }]);
+      };
     }
     const body = el('div', 'task-body');
     const title = el('button', 'task-title', x.title);
@@ -1008,8 +1022,14 @@ Turn the message into changes to the list.
 
   // ---------- toast / banner ----------
   let toastTimer = null;
-  function toast(msg, ms = 4000) {
+  // A short message at the bottom; pass undoOps to show an Undo button that applies them.
+  function toast(msg, ms = 4000, undoOps) {
     const t = $('toast'); t.textContent = msg; t.hidden = false;
+    if (undoOps && undoOps.length) {
+      const u = el('button', 'toast-undo', 'Undo'); u.type = 'button';
+      u.onclick = () => { commit(undoOps); t.hidden = true; };
+      t.append(u);
+    }
     clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, ms);
   }
   function showBanner(msg) { const b = $('banner'); b.textContent = msg; b.hidden = false; }

@@ -7,13 +7,13 @@
   --bg: #121710;
   --bg-2: #1a2117;
   --on-accent: #141a10;
-  --glass: rgba(214, 226, 198, 0.05);
-  --glass-2: rgba(214, 226, 198, 0.085);
-  --stroke: rgba(214, 226, 198, 0.10);
-  --stroke-2: rgba(214, 226, 198, 0.18);
-  --ink: #e7eadf;
-  --muted: #a9b19e;
-  --faint: #737c69;
+  --glass: rgba(14, 19, 12, 0.40);      /* dark frosted panels sit on the light fog */
+  --glass-2: rgba(225, 235, 210, 0.10); /* hover / selected states */
+  --stroke: rgba(220, 232, 205, 0.12);
+  --stroke-2: rgba(220, 232, 205, 0.22);
+  --ink: #eef1e6;
+  --muted: #bcc4b0;
+  --faint: #8c9682;
   --violet: #a3b78a;
   --violet-2: #c4d3ae;
   --cyan: #9cc3b9;
@@ -46,14 +46,15 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .glow {
   position: fixed; inset: 0; z-index: -1; pointer-events: none;
   background:
-    repeating-linear-gradient(90deg, transparent 0 37px, rgba(220, 230, 205, 0.018) 37px 38px, transparent 38px 91px, rgba(0, 0, 0, 0.05) 91px 93px),
-    radial-gradient(90vw 55vh at 50% -10%, rgba(160, 178, 140, 0.30), transparent 70%),
-    linear-gradient(180deg, #2c3626 0%, #1d251a 38%, #141a12 70%, #0e120c 100%);
+    repeating-linear-gradient(90deg, transparent 0 37px, rgba(230, 238, 220, 0.025) 37px 38px, transparent 38px 91px, rgba(0, 0, 0, 0.05) 91px 93px),
+    radial-gradient(100vw 60vh at 50% -5%, rgba(170, 186, 158, 0.35), transparent 70%),
+    linear-gradient(180deg, #6a7b61 0%, #5c6d54 28%, #4a5a43 50%, #2e3a2a 68%, #182016 84%, #0f140d 100%);
 }
 .glow::after {
   content: ""; position: absolute; inset: 0;
-  background: radial-gradient(60vw 30vh at 30% 100%, rgba(0, 0, 0, 0.35), transparent 70%);
+  background: radial-gradient(70vw 35vh at 25% 100%, rgba(0, 0, 0, 0.45), transparent 70%);
 }
+#rain { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; }
 
 .app { display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); min-height: 100vh; }
 
@@ -187,7 +188,7 @@ h2 { margin: 0; font-family: var(--font-display); font-size: 15px; font-weight: 
 /* Hierarchy: focus is the hero; the rest is quieter */
 .hero-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 20px; align-items: start; }
 .stack { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
-.card.quiet { background: rgba(255, 255, 255, 0.028); }
+.card.quiet { background: rgba(14, 19, 12, 0.32); }
 .card.quiet .card-head h2 { font-size: 13.5px; color: var(--muted); letter-spacing: .01em; }
 .focus-card { padding: 22px; }
 .focus-card .card-head h2 { font-size: 20px; }
@@ -229,6 +230,19 @@ h2 { margin: 0; font-family: var(--font-display); font-size: 15px; font-weight: 
 .task.reminder .task-title { color: var(--muted); font-weight: 500; }
 .issue-ic { border-radius: 7px; background: rgba(212, 178, 106, 0.16); color: var(--amber); font-weight: 800; font-size: 13px; }
 .task.compact .bell, .task.compact .issue-ic { margin-top: 0; }
+.prog-ctl {
+  flex: none; display: inline-flex; align-items: center; gap: 2px; height: 24px; margin-top: 0; padding: 0 2px; border-radius: 9px;
+  background: rgba(150, 190, 180, 0.12); box-shadow: inset 0 0 0 1px rgba(150, 190, 180, 0.35);
+}
+.pc-count { font: 600 11.5px var(--font-mono); color: var(--cyan); min-width: 30px; text-align: center; }
+.pc-btn { all: unset; cursor: pointer; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 7px; color: var(--cyan); font-weight: 700; font-size: 14px; line-height: 1; }
+.pc-btn:hover { background: rgba(150, 190, 180, 0.22); }
+.pc-btn:disabled { opacity: .3; cursor: default; background: none; }
+.pc-btn:focus-visible { outline: 2px solid var(--violet-2); }
+.pc-btn.finish { background: var(--green); color: var(--on-accent); }
+.toast { display: flex; align-items: center; gap: 14px; }
+.toast-undo { all: unset; cursor: pointer; font-weight: 700; color: var(--violet-2); padding: 2px 6px; border-radius: 6px; }
+.toast-undo:hover { background: var(--glass-2); }
 .prog-btn {
   all: unset; cursor: pointer; flex: none; box-sizing: border-box; min-width: 38px; height: 22px; padding: 0 6px; margin-top: 1px;
   display: grid; place-items: center; border-radius: 8px; font: 600 11.5px var(--font-mono);
@@ -336,6 +350,8 @@ select option { background: #1a2017; }
 .row { display: flex; gap: 8px; align-items: center; }
 .row.wrap { flex-wrap: wrap; }
 .file-btn { display: inline-flex; align-items: center; }
+.set-block label.toggle { display: flex; align-items: center; gap: 10px; color: var(--ink); font-weight: 500; font-size: 14px; cursor: pointer; }
+.toggle input { width: 18px; height: 18px; accent-color: var(--violet); }
 
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%); z-index: 20;
