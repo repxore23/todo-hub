@@ -509,7 +509,8 @@ Turn the message into changes to the list.
   }
 
   // ---------- rendering ----------
-  const PALETTE = ['#9d8cff', '#3dd6f5', '#ff7eb6', '#ffc361', '#4fe0a5', '#6aa8ff', '#ff9f5a', '#c3e86b', '#e58cff', '#7ee7e0'];
+  // Earthy, desaturated course colours that sit in the fog (sage, mist teal, clay, ochre, slate, rose, sand, moss…).
+  const PALETTE = ['#b5c49a', '#8fbdb3', '#d49a7c', '#d3b46e', '#97abcb', '#c79aac', '#bfae8c', '#8fa86f', '#a9a3c9', '#9ec7cc'];
   function categories() {
     const s = new Set();
     data.tasks.forEach((t) => { if (t.category) s.add(t.category); });
@@ -549,12 +550,15 @@ Turn the message into changes to the list.
     cats.forEach((c) => { const o = document.createElement('option'); o.value = c; dl.append(o); });
 
     if (view === 'dashboard') {
-      renderKpis(open, t);
+      renderSummary(open, t);
       renderWeek(open, t, colors);
       renderBars(colors);
-      const rank = (x) => (x.due && x.due < t ? 0 : x.due === t ? 1 : 2);
+      // Reminders sink to the bottom; real work first, overdue before due-today before pinned.
+      const rank = (x) => (kindOf(x) === 'reminder' ? 3 : x.due && x.due < t ? 0 : x.due === t ? 1 : 2);
       const focus = open.filter((x) => x.focus || (x.due && x.due <= t))
         .sort((a, b) => rank(a) - rank(b) || byPriority(a, b));
+      const focusMin = focus.reduce((a, x) => a + estMinutes(x), 0);
+      $('focus-sub').textContent = focus.length ? `start at the top · ~${fmtMin(focusMin)}` : '';
       fillList($('focus-list'), focus, colors, 'Nothing urgent today. Tap ☆ on any task to work on it today.');
       renderSections(open.filter((x) => !x.focus && x.due && x.due > t && x.due <= addDays(t, 7)).sort(byDue), colors);
     } else if (view === 'tasks') {
@@ -594,34 +598,21 @@ Turn the message into changes to the list.
       box.append(b);
     });
   }
-  function renderKpis(open, t) {
-    const box = $('kpis'); box.textContent = '';
-    const overdue = open.filter((x) => x.due && x.due < t).length;
-    const today = open.filter((x) => x.due === t).length;
-    const high = open.filter((x) => x.priority === 'high').length;
-    const inF = (x) => filterCat === 'all' || x.category === filterCat;
-    const doneDays = Array.from({ length: 7 }, (_, i) => addDays(t, i - 6));
-    const doneCounts = doneDays.map((d) => data.tasks.filter((x) => x.done && inF(x) && x.doneAt && fmt(new Date(x.doneAt)) === d).length);
-    const doneWeek = doneCounts.reduce((a, b) => a + b, 0);
-    const tiles = [
-      { label: 'Overdue', value: overdue, note: overdue ? 'needs attention' : 'all clear', color: 'var(--pink)', tint: 'rgba(255,111,168,.9)' },
-      { label: 'Due today', value: today, note: today ? 'on today’s plate' : 'nothing due today', color: 'var(--cyan)', tint: 'rgba(61,214,245,.9)' },
-      { label: 'Open', value: open.length, note: `${high} high priority`, color: 'var(--violet)', tint: 'rgba(139,123,255,.9)' },
-      { label: 'Done this week', value: doneWeek, note: 'last 7 days', color: 'var(--green)', tint: 'rgba(79,224,165,.9)', spark: doneCounts },
-    ];
-    for (const k of tiles) {
-      const c = el('div', 'card kpi');
-      c.style.setProperty('--tint', k.tint);
-      const lab = el('div', 'label'); const dot = el('i'); dot.style.background = k.color; lab.append(dot, k.label);
-      c.append(lab, el('div', 'value', String(k.value)), el('div', 'note', k.note));
-      if (k.spark) {
-        const sb = el('div', 'spark-bars');
-        const mx = Math.max(1, ...k.spark);
-        k.spark.forEach((v, i) => { const s = el('span'); s.style.height = Math.max(2, (v / mx) * 30) + 'px'; s.title = `${dueLabel(doneDays[i])}: ${v}`; sb.append(s); });
-        c.append(sb);
-      }
-      box.append(c);
-    }
+  // One slim line under the date instead of four big number tiles.
+  function renderSummary(open, t) {
+    const box = $('summary'); box.textContent = '';
+    const work = open.filter((x) => kindOf(x) !== 'reminder' && !isShift(x));
+    const overdue = work.filter((x) => x.due && x.due < t).length;
+    const today = work.filter((x) => x.due === t).length;
+    const weekMin = work.filter((x) => x.focus || (x.due && x.due <= addDays(t, 7))).reduce((a, x) => a + estMinutes(x), 0);
+    const weekAgo = Date.now() - 7 * 864e5;
+    const done = data.tasks.filter((x) => x.done && x.doneAt >= weekAgo && (filterCat === 'all' || x.category === filterCat)).length;
+    const bits = [];
+    if (overdue) bits.push(['late', `${overdue} overdue`]);
+    bits.push(['', today ? `${today} due today` : 'nothing due today']);
+    bits.push(['', `~${fmtMin(weekMin)} of work this week`]);
+    if (done) bits.push(['good', `${done} done this week`]);
+    bits.forEach(([cls, text]) => box.append(el('span', 'pill ' + cls, text)));
   }
 
   // Task kinds: a normal task (checkbox), a reminder (no checkbox, hides itself after its date),
@@ -683,32 +674,27 @@ Turn the message into changes to the list.
   }
   function renderWeek(open, t, colors) {
     const box = $('week-strip'); box.textContent = '';
-    const overdue = open.filter((x) => x.due && x.due < t).length;
-    $('week-sub').textContent = 'what’s due each day' + (overdue ? ` · ${overdue} overdue in Today’s focus` : '');
+    // One dot per task (course colour; ringed = high priority), amber strip = work shift. Hover a day for titles.
+    $('week-sub').textContent = 'hover a day for details';
     const days = Array.from({ length: 7 }, (_, i) => addDays(t, i));
-    const per = days.map((d) => open.filter((x) => x.due === d));
-    const loads = per.map((a) => a.filter((x) => !isShift(x)).length);
-    const busiest = Math.max(...loads);
+    const per = days.map((d) => open.filter((x) => x.due === d && kindOf(x) !== 'reminder'));
     days.forEach((d, i) => {
       const shifts = per[i].filter(isShift);
       const work = per[i].filter((x) => !isShift(x)).sort(byPriority);
-      const busy = busiest >= 3 && loads[i] === busiest;
-      const col = el('div', 'day' + (i === 0 ? ' today' : '') + (busy ? ' busy' : ''));
       const date = parse(d);
-      const head = el('div', 'day-head');
-      head.append(el('span', 'dow', i === 0 ? 'Today' : date.toLocaleDateString(undefined, { weekday: 'short' })), el('span', 'dnum', String(date.getDate())));
-      col.append(head);
-      col.append(el('div', 'load' + (work.length ? '' : ' free'), work.length ? `${work.length} due${busy ? ' · busiest' : ''}` : 'Free'));
-      shifts.forEach((s) => { const b = el('div', 'shift', shiftLabel(s)); b.title = s.title; col.append(b); });
-      const list = el('div', 'day-items');
-      work.slice(0, 4).forEach((x) => {
-        const it = el('div', 'day-item' + (x.priority === 'high' ? ' hi' : ''), x.title);
-        it.style.setProperty('--c', colors[x.category] || 'var(--muted)');
-        it.title = (x.category ? x.category + ' · ' : '') + x.title;
-        list.append(it);
+      const col = el('div', 'day' + (i === 0 ? ' today' : '') + (work.length ? '' : ' free') + (work.length >= 3 ? ' busy' : ''));
+      const dow = i === 0 ? 'Today' : date.toLocaleDateString(undefined, { weekday: 'short' });
+      col.title = `${dow} ${date.getDate()}` + (work.length ? '\n' + work.map((x) => `• ${x.title}${x.category ? ` (${x.category})` : ''}`).join('\n') : '\nNothing due')
+        + (shifts.length ? '\n' + shifts.map((s) => `⏱ ${s.title}`).join('\n') : '');
+      col.append(el('span', 'dow', dow), el('span', 'dnum', String(date.getDate())));
+      const dots = el('div', 'dots');
+      work.forEach((x) => {
+        const dot = el('i', 'dot' + (x.priority === 'high' ? ' hi' : ''));
+        dot.style.setProperty('--c', colors[x.category] || 'var(--muted)');
+        dots.append(dot);
       });
-      if (work.length > 4) list.append(el('div', 'day-more', `+${work.length - 4} more`));
-      col.append(list);
+      col.append(dots);
+      if (shifts.length) col.append(el('span', 'shift-strip', shiftLabel(shifts[0]).replace('Shift ', '')));
       box.append(col);
     });
   }
@@ -753,17 +739,17 @@ Turn the message into changes to the list.
       return { c, weekMin, laterMin, hi: week.filter((x) => x.priority === 'high').length, next, late, n: open.length };
     }).filter((r) => r.n).sort((a, b) => b.weekMin - a.weekMin || b.laterMin - a.laterMin);
     const total = rows.reduce((a, r) => a + r.weekMin, 0);
-    $('course-sub').textContent = rows.length ? `~${fmtMin(total)} due this week · faded = later` : '';
+    $('course-sub').textContent = rows.length ? `hours this week · faded = later` : '';
     if (!rows.length) { box.append(el('p', 'empty', 'No open tasks.')); return; }
     const mx = Math.max(...rows.map((r) => r.weekMin + r.laterMin), 1);
     for (const r of rows) {
       const b = el('button', 'bar-row');
       b.type = 'button';
-      b.title = `Show ${r.c} tasks (times are estimates; set exact ones by editing a task)`;
       if (filterCat !== 'all' && filterCat !== r.c) b.style.opacity = '.45';
       const name = el('div', 'name'); const sw = el('i', 'swatch'); sw.style.background = colors[r.c];
       name.append(sw, el('span', null, r.c));
-      const count = el('div', 'count' + (r.weekMin ? ' strong' : ''), r.weekMin ? `~${fmtMin(r.weekMin)} this week` : 'nothing this week');
+      if (r.late) name.append(el('i', 'late-dot'));
+      const count = el('div', 'count' + (r.weekMin ? ' strong' : ''), r.weekMin ? `~${fmtMin(r.weekMin)}` : '–');
       const track = el('div', 'track');
       if (r.weekMin) { const f = el('div', 'fill hi'); f.style.width = (r.weekMin / mx) * 100 + '%'; f.style.background = colors[r.c]; track.append(f); }
       if (r.laterMin) { const f = el('div', 'fill rest'); f.style.width = (r.laterMin / mx) * 100 + '%'; f.style.background = colors[r.c]; track.append(f); }
@@ -772,8 +758,8 @@ Turn the message into changes to the list.
       if (r.hi) bits.push(`${r.hi} high`);
       if (r.next) bits.push(`next: ${r.next.due === t ? 'today' : parse(r.next.due).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })}`);
       if (r.laterMin) bits.push(`~${fmtMin(r.laterMin)} later`);
-      const info = el('div', 'bar-info' + (r.late ? ' late' : ''), bits.join(' · '));
-      b.append(name, count, track, info);
+      b.title = `${r.c}: ~${fmtMin(r.weekMin)} this week${bits.length ? ' · ' + bits.join(' · ') : ''}\n(Estimates; set exact times by editing a task. Click to filter.)`;
+      b.append(name, count, track);
       b.onclick = () => { filterCat = filterCat === r.c ? 'all' : r.c; render(); };
       box.append(b);
     }
@@ -863,7 +849,8 @@ Turn the message into changes to the list.
   function row(x, colors, compact) {
     const kind = kindOf(x);
     const total = totalOf(x);
-    const li = el('li', 'task' + (x.done ? ' done' : '') + (compact ? ' compact' : '') + (kind === 'reminder' ? ' reminder' : ''));
+    const li = el('li', 'task' + (x.done ? ' done' : '') + (compact ? ' compact' : '') + (kind === 'reminder' ? ' reminder' : '')
+      + (x.priority === 'high' ? ' hi' : x.priority === 'low' ? ' lo' : '') + (x.focus ? ' pinned' : ''));
     let cb;
     if (kind === 'reminder' && !x.done) {
       cb = el('span', 'bell');
@@ -904,8 +891,7 @@ Turn the message into changes to the list.
         meta.append(el('span', 'due' + (!x.done && x.due < t ? ' late' : x.due === t ? ' today' : ''), label));
       }
       if (x.category && !compact) { const c = el('span', 'cat'); const s = el('i', 'swatch'); s.style.background = colors[x.category]; c.append(s, x.category); meta.append(c); }
-      if (x.priority === 'high') meta.append(el('span', 'pri high', 'High'));
-      if (x.priority === 'low' && !compact) meta.append(el('span', 'pri low', 'Low'));
+      // Priority is shown by a pink dot before the title (high) or dimmer text (low), not pills.
       if (kind === 'progress' && !x.done && !compact) meta.append(el('span', 'est', `~${fmtMin(estMinutes(x))} left`));
       if (meta.childNodes.length) body.append(meta);
       if (kind === 'progress' && !x.done && total) {
