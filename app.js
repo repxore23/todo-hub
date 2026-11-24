@@ -217,6 +217,8 @@
         if (Number(c.est) > 0) task.est = Math.round(Number(c.est));
         if (Number(c.total) > 0) task.total = Math.round(Number(c.total));
         if (c.note) task.note = String(c.note).slice(0, 1000);
+        if (c.repeat === 'weekly') task.repeat = 'weekly';
+        if (c.kind === 'shift') task.kind = 'shift';
         ops.push({ type: 'add', task }); work.push(task); did.push(`added “${task.title}”`);
         continue;
       }
@@ -228,7 +230,9 @@
         if (c.note) f.note = String(c.note).slice(0, 1000);
         op = { type: 'patch', id: t.id, fields: f }; did.push(`resolved “${t.title}”`);
       } else if (action === 'complete' || action === 'done') {
-        op = { type: 'patch', id: t.id, fields: { done: true, doneAt: Date.now() } }; did.push(`finished “${t.title}”`);
+        const f = { done: true, doneAt: Date.now() };
+        if (c.note) f.note = String(c.note).slice(0, 1000);
+        op = { type: 'patch', id: t.id, fields: f }; did.push(`finished “${t.title}”`);
       } else if (action === 'reopen' || action === 'undone') {
         op = { type: 'patch', id: t.id, fields: { done: false, doneAt: null } }; did.push(`reopened “${t.title}”`);
       } else if (action === 'delete' || action === 'remove') {
@@ -241,8 +245,11 @@
         if (c.priority) f.priority = normPri(c.priority);
         const fv = String(c.focus === undefined ? '' : c.focus).toLowerCase();
         if (fv === 'yes' || fv === 'true') f.focus = true; else if (fv === 'no' || fv === 'false') f.focus = false;
-        if (['task', 'reminder', 'progress', 'issue'].includes(c.kind)) f.kind = c.kind;
+        if (['task', 'reminder', 'progress', 'issue', 'shift'].includes(c.kind)) f.kind = c.kind;
         if (['due', 'aim'].includes(c.dateKind)) f.dateKind = c.dateKind;
+        if (c.off === true || c.off === 'true' || c.off === 'yes') f.off = true;
+        else if (c.off === false || c.off === 'false' || c.off === 'no') f.off = false;
+        if (c.repeat === 'weekly' || c.repeat === '' || c.repeat === 'none') f.repeat = c.repeat === 'weekly' ? 'weekly' : '';
         if (Number(c.est) > 0) f.est = Math.round(Number(c.est));
         if (Number(c.total) > 0) f.total = Math.round(Number(c.total));
         if (c.note) f.note = String(c.note).slice(0, 1000);
