@@ -35,7 +35,7 @@
   }
 
   // ---------- state ----------
-  const APP_VERSION = 'hub-v12';
+  const APP_VERSION = 'hub-v14';
   const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [] });
   const FB_TYPES = ['look', 'feature', 'issue', 'idea'];
   function normalizeFeedback(f) {
@@ -336,8 +336,16 @@
     if (!parsed) throw { code: 'corrupt' };
     return parsed;
   }
+  // Written into the task file so any Claude chat that reads it knows how to change the list,
+  // even if its project instructions haven't been updated yet.
+  const ABOUT_FOR_CLAUDE = [
+    'This is the To-Do Hub task list (app: https://repxore23.github.io/todo-hub/). It is the single source of truth for the user\'s to-dos and deadlines; it replaces the old "To-do & deadlines" doc.',
+    'You cannot edit this file. To change the list, create a NEW Google Drive file titled todo-hub-inbox-YYYYMMDD-HHMM.json (contentMimeType text/plain, disableConversionToGoogleType true) containing {"changes":[...]}. The app applies it next time it opens, then deletes it.',
+    'Change actions: {"action":"add","title":...,"due":"YYYY-MM-DD","category":...,"priority":"high|med|low","dateKind":"due|aim","repeat":"weekly","est":minutes} · {"action":"complete","task":"<exact title>","note":...} · {"action":"update","task":"<exact title>", only changed fields; "due":"none" clears; "focus":"yes|no"; "progress":N; "off":true for a shift day off; "note":...} · {"action":"resolve","task":...,"note":...} for missed/missing items · {"action":"reopen"|"delete","task":...} · {"action":"feedback","type":"look|feature|issue|idea","text":...} for comments about the app itself.',
+    'Meanings: "due" = real deadline (overdue when missed); "aim" = the user\'s own target (never overdue). Reminders ("info only", "last day") and work shifts are events, never complete them. Progress tasks (lecture batches) use "progress", not complete. Read each task\'s "note" for context the user wrote. Only count real deadlines as overdue.',
+  ].join(' ');
   async function writeFile(id, d) {
-    await gfetch(`${UPLOAD}/files/${id}?uploadType=media`, { method: 'PATCH', headers: { 'Content-Type': 'text/plain; charset=UTF-8' }, body: JSON.stringify(d, null, 1) });
+    await gfetch(`${UPLOAD}/files/${id}?uploadType=media`, { method: 'PATCH', headers: { 'Content-Type': 'text/plain; charset=UTF-8' }, body: JSON.stringify({ about: ABOUT_FOR_CLAUDE, ...d }, null, 1) });
   }
   function lenientJson(txt) {
     const s = String(txt || '').replace(/^﻿/, '');

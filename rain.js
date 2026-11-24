@@ -60,6 +60,35 @@
   }
 
   // ---------- rain ----------
+  // Tuned to look like the desktop wallpaper at app-window size: fewer, finer drops, no dark mist patches.
+  // (A desktop wallpaper is 2-3× wider than the app window, so the same pixel sizes look much heavier here.)
+  // Based on the wallpaper's own settings, scaled to the window: the desktop is ~2× wider than the app,
+  // so the same pixel-sized drops looked twice as heavy here. Rain amount (Light/Medium/Heavy) is in Settings.
+  const LEVELS = { light: 0.45, medium: 0.75, heavy: 1.1 };
+  function rainOptions(w) {
+    const s = Math.min(1, Math.max(0.4, w / 2200));                 // drop size vs. a desktop-width wallpaper
+    const amt = LEVELS[ls('hub.rainLevel', 'medium')] || LEVELS.medium; // how much rain
+    const base = {
+      backgroundBlurSteps: 2,
+      backgroundWrapMode: 'clamp',
+      mist: true,
+      mistBlurStep: 4,
+      mistColor: [0.30, 0.34, 0.27, 1], // lighter, greener than the wallpaper's near-black mist, so the top isn't dark
+      mistTime: 18,
+      dropletsPerSeconds: Math.round(500 * s * amt),
+      dropletSize: [10 * s, 30 * s],
+      evaporate: 10,
+      gravity: 2400,
+      raindropCompose: 'smoother',
+      refractBase: 0.4,
+      refractScale: 0.6,
+      slipRate: 0.1,
+      spawnInterval: [1 / amt, 1 / amt],
+      spawnSize: [Math.max(0.45, s), Math.max(0.55, s * 1.1)],
+      spawnLimit: Math.round((w < 860 ? 900 : 2000) * s * amt),
+    };
+    return { ...base, ...ls('hub.rainCfg', {}) }; // optional per-device overrides (for tuning)
+  }
   async function startRain() {
     stopRain();
     const w = window.innerWidth; const h = window.innerHeight;
@@ -74,26 +103,7 @@
     cv.hidden = false;
     cv.width = w; cv.height = h;
     try {
-      fx = new window.RaindropFX({
-        canvas: cv,
-        background: bg.canvas,
-        // Settings from the "Raindrops - Doomer" wallpaper:
-        backgroundBlurSteps: 2,
-        backgroundWrapMode: 'clamp',
-        mist: true,
-        mistBlurStep: 4,
-        mistColor: [0.102, 0.102, 0.102, 1],
-        mistTime: 10,
-        dropletsPerSeconds: 500,
-        dropletSize: [10, 30],
-        evaporate: 10,
-        gravity: 2400,
-        raindropCompose: 'smoother',
-        refractBase: 0.4,
-        refractScale: 0.6,
-        slipRate: 0.1,
-        spawnLimit: w < 860 ? 800 : 2000, // lighter on phones
-      });
+      fx = new window.RaindropFX({ canvas: cv, background: bg.canvas, ...rainOptions(w) });
       fx.start();
       glow.style.visibility = 'hidden'; // the rain canvas now draws the picture itself
     } catch {
@@ -124,6 +134,14 @@
     toggle.addEventListener('change', () => {
       rainOn = toggle.checked;
       try { localStorage.setItem('hub.rain', JSON.stringify(rainOn)); } catch { /* ignore */ }
+      startRain();
+    });
+  }
+  const level = document.getElementById('rain-level');
+  if (level) {
+    level.value = ls('hub.rainLevel', 'medium');
+    level.addEventListener('change', () => {
+      try { localStorage.setItem('hub.rainLevel', JSON.stringify(level.value)); } catch { /* ignore */ }
       startRain();
     });
   }
