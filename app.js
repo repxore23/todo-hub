@@ -201,7 +201,7 @@
         resolve();
       };
       tokenClient.error_callback = (e) => reject(e);
-      tokenClient.requestAccessToken({ prompt: LS.get('hub.gconsent', false) ? '' : 'consent' });
+      tokenClient.requestAccessToken({ prompt: LS.get('hub.gconsent', false) ? '' : 'select_account consent' });
     });
   }
   async function connect() {
@@ -842,7 +842,7 @@ Turn the message into changes to the list.
   $('drive-connect').onclick = () => { if (tokenValid()) sync(); else connect(); $('settings').close(); };
   $('drive-disconnect').onclick = () => {
     try { if (token && window.google) google.accounts.oauth2.revoke(token.access_token, () => {}); } catch { /* ignore */ }
-    token = null; LS.del('hub.gtoken'); LS.del('hub.gconsent');
+    token = null; LS.del('hub.gtoken'); LS.del('hub.gconsent'); LS.del('hub.fileId');
     setSync('warn', 'Tap to connect Drive');
     $('settings').close();
   };
