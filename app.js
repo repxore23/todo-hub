@@ -38,7 +38,7 @@
   }
 
   // ---------- state ----------
-  const APP_VERSION = 'hub-v19';
+  const APP_VERSION = 'hub-v20';
   const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [] });
   const FB_TYPES = ['look', 'feature', 'issue', 'idea'];
   function normalizeFeedback(f) {
@@ -389,7 +389,7 @@
   async function sync() {
     if (!DRIVE_MODE) return;
     if (!tokenValid()) {
-      setSync('warn', pending.length ? `Sync ${pending.length} change${pending.length > 1 ? 's' : ''}` : 'Connect');
+      setSync('warn', pending.length ? `Sync (${pending.length})` : 'Connect');
       return;
     }
     if (syncing) { syncAgain = true; return syncing; }
@@ -432,6 +432,7 @@
         saveLocal();
         LS.set('hub.lastSync', Date.now());
         setSync('ok', 'Synced');
+        autoPlan(); // once a day, after the freshest list has loaded
         render();
         if (from.length) toast('From Claude chat: ' + from.join(' · '), 7000);
       } catch (e) {
@@ -648,6 +649,7 @@ Turn the message into changes to the list.
     renderSidebar(cats, colors);
     renderChips(cats, colors);
     renderQuickWins(colors);
+    renderPlant();
     const dl = $('cats'); dl.textContent = '';
     cats.forEach((c) => { const o = document.createElement('option'); o.value = c; dl.append(o); });
 
@@ -698,11 +700,20 @@ Turn the message into changes to the list.
           nl.append(g);
         });
       }
-      renderSections(open.filter((x) => !zoneIds.has(x.id) && x.due && x.due > t && x.due <= addDays(t, 7)).sort(byDue), colors);
+      renderLabs(open, t, colors);
+      renderExams(t, colors);
+      // Labs & tutorials have their own panel, so they're left out of the Courses list.
+      renderSections(open.filter((x) => !zoneIds.has(x.id) && !isLabItem(x) && x.due && x.due > t && x.due <= addDays(t, 7)).sort(byDue), colors);
     } else if (view === 'tasks') {
       renderGroups(open, t, colors);
     } else {
       renderDone(colors, inFilter);
+    }
+    if (oneMode) renderOne();
+    else {
+      $('onething').hidden = true; document.body.classList.remove('one-mode');
+      $('onething-btn').setAttribute('aria-pressed', 'false'); $('onething-btn').textContent = 'One thing';
+      ['dashboard', 'tasks', 'done'].forEach((v) => { $('view-' + v).hidden = v !== view; });
     }
   }
 
@@ -1009,7 +1020,8 @@ Turn the message into changes to the list.
   function renderDone(colors, inFilter) {
     const box = $('done-list'); box.textContent = '';
     const done = data.tasks.filter((x) => x.done && inFilter(x)).sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
-    $('done-sub').textContent = `${done.length} task${done.length === 1 ? '' : 's'}`;
+    const blooms = LS.get('hub.blooms', []).length;
+    $('done-sub').textContent = `${done.length} task${done.length === 1 ? '' : 's'}` + (blooms ? ` · your plant bloomed on ${blooms} day${blooms === 1 ? '' : 's'}` : '');
     if (!done.length) { box.append(el('p', 'empty', 'Finished tasks show up here, grouped by the day you finished them.')); return; }
     let last = null; let ul = null;
     done.slice(0, 300).forEach((x) => {
@@ -1043,7 +1055,7 @@ Turn the message into changes to the list.
       const minus = el('button', 'pc-btn', '−'); minus.type = 'button';
       minus.disabled = x.prog <= 0;
       minus.setAttribute('aria-label', 'One less done: ' + x.title);
-      minus.onclick = () => { track('progress.minus'); commit([{ type: 'patch', id: x.id, fields: { prog: Math.max(0, x.prog - 1) } }]); };
+      minus.onclick = () => { track('progress.minus'); addGrowth(-60); commit([{ type: 'patch', id: x.id, fields: { prog: Math.max(0, x.prog - 1) } }]); };
       const count = el('span', 'pc-count', `${Math.min(x.prog, total)}/${total}`);
       const full = x.prog >= total;
       const plus = el('button', 'pc-btn' + (full ? ' finish' : ''), full ? '✓' : '+'); plus.type = 'button';
@@ -1051,6 +1063,7 @@ Turn the message into changes to the list.
       plus.title = full ? 'All parts done: tap to finish' : 'One more done';
       plus.onclick = () => {
         track(full ? 'progress.finish' : 'progress.plus');
+        if (!full) addGrowth(60); // each lecture watched grows the plant
         if (full) {
           commit([{ type: 'patch', id: x.id, fields: { done: true, doneAt: Date.now() } }]);
           toast(`Finished “${x.title}”`, 6000, [{ type: 'patch', id: x.id, fields: { done: false, doneAt: null } }]);
@@ -1377,6 +1390,7 @@ Turn the message into changes to the list.
   function openSettings() {
     $('api-key').value = LS.get('hub.apiKey', '');
     $('api-model').value = LS.get('hub.model', 'claude-haiku-5-5');
+    $('autoplan-toggle').checked = LS.get('hub.autoplan', true) !== false;
     $('api-saved').textContent = '';
     if (DRIVE_MODE) {
       $('drive-connect').hidden = false;
@@ -1490,6 +1504,219 @@ Turn the message into changes to the list.
       ops.push({ type: 'add', task: normalizeTask({ ...x, id, due: nd, done: false, doneAt: null, prog: 0, off: false, nextMade: false, focus: false, note: '', createdAt: Date.now() }) });
     }
     return ops;
+  }
+
+  // ---------- labs & tutorials panel, tests & exams timeline ----------
+  const isLabItem = (x) => !isShift(x) && /\blab\b|\blab ?#?\d|pre-?lab|post-?lab|tutorial|practical|talklab/i.test(x.title);
+  const isExam = (x) => /\b(final exam|exam|term test|midterm|final)\b/i.test(x.title) && !/viewing|conflict|feedback|review/i.test(x.title);
+  function renderLabs(open, t, colors) {
+    const items = open.filter((x) => isLabItem(x) && x.due && x.due <= addDays(t, 14) && kindOf(x) !== 'reminder').sort(byDue);
+    $('labs-card').hidden = !items.length;
+    const box = $('labs-list'); box.textContent = '';
+    const by = {};
+    items.forEach((x) => { (by[x.category || 'Other'] = by[x.category || 'Other'] || []).push(x); });
+    Object.keys(by).sort().forEach((c) => {
+      const g = el('div', 'lab-group');
+      const h = el('div', 'course-label'); const s = el('i', 'swatch'); s.style.background = colors[c] || 'var(--muted)';
+      h.append(s, c); g.append(h);
+      const ul = el('ul', 'tasks compact');
+      by[c].slice(0, 4).forEach((x) => { const li = row(x, colors, true); if (x.due <= t) li.classList.add('lab-now'); ul.append(li); });
+      g.append(ul); box.append(g);
+    });
+  }
+  function renderExams(t, colors) {
+    const all = data.tasks.filter((x) => !x.done && isExam(x));
+    const dated = all.filter((x) => x.due && x.due >= t).sort(byDue);
+    const tba = all.filter((x) => !x.due);
+    $('exams-card').hidden = !dated.length && !tba.length;
+    const tl = $('exam-timeline'); tl.textContent = ''; tl.hidden = !dated.length;
+    if (dated.length) {
+      const span = Math.max(14, daysBetween(t, dated[dated.length - 1].due) + 4);
+      tl.append(el('div', 'tl-line'), el('span', 'tl-today', 'Today'));
+      dated.forEach((x, i) => {
+        const d = daysBetween(t, x.due);
+        const pos = (d / span) * 100;
+        const m = el('div', 'tl-mark' + (i % 2 ? ' below' : '') + (pos > 70 ? ' right' : ''));
+        m.style.left = pos + '%';
+        m.style.setProperty('--c', colors[x.category] || 'var(--violet-2)');
+        const lab = el('div', 'tl-label');
+        lab.append(el('b', null, x.title), el('span', null, `${dueLabel(x.due)} · ${d === 0 ? 'today' : d === 1 ? 'tomorrow' : `in ${d} days`}`));
+        m.append(el('i', 'tl-dot'), lab);
+        tl.append(m);
+      });
+    }
+    const tbaEl = $('exam-tba');
+    tbaEl.hidden = !tba.length;
+    tbaEl.textContent = tba.length ? `Date not set yet: ${tba.map((x) => x.title).join(', ')}` : '';
+  }
+
+  // ---------- the plant: grows as you finish things today ----------
+  // Finished work (by estimated minutes) grows it toward a daily goal; it blooms at the goal and resets each morning.
+  // No streaks, nothing lost: the Done page just counts blooms.
+  const doneValue = (x) => Math.min(120, Math.max(15, kindOf(x) === 'progress' ? 60 : (x.est || estMinutes({ ...x, kind: 'task' }) || 30)));
+  function addGrowth(min) {
+    const t = todayStr(); const g = LS.get('hub.growth', { date: t, extra: 0 });
+    LS.set('hub.growth', { date: t, extra: Math.max(0, (g.date === t ? g.extra : 0) + min) });
+  }
+  function shiftMinutes(x) {
+    const m = x.title.match(/(\d{1,2})(?::(\d\d))?\s*(am|pm)?\s*[–-]\s*(\d{1,2})(?::(\d\d))?\s*(am|pm)?/i);
+    if (!m) return 300;
+    let a = Number(m[1]) + (Number(m[2]) || 0) / 60; let b = Number(m[4]) + (Number(m[5]) || 0) / 60;
+    if (/pm/i.test(m[3] || m[6] || '') && a < 12 && (m[3] ? /pm/i.test(m[3]) : true) && a < b) a += 12;
+    if (/pm/i.test(m[6] || '') && b < 12) b += 12;
+    return Math.max(60, Math.round((b - a) * 60));
+  }
+  function growth() {
+    const t = todayStr();
+    const g = LS.get('hub.growth', { date: t, extra: 0 });
+    const done = data.tasks.filter((x) => x.done && !x.skipped && x.doneAt && fmt(new Date(x.doneAt)) === t && !['reminder', 'shift'].includes(kindOf(x)));
+    const mins = done.reduce((a, x) => a + doneValue(x), 0) + (g.date === t ? g.extra : 0);
+    const working = data.tasks.some((x) => isShift(x) && x.due === t && !x.off);
+    const goal = working ? 60 : 120;
+    const pct = mins / goal;
+    if (pct >= 1) { const b = LS.get('hub.blooms', []); if (!b.includes(t)) LS.set('hub.blooms', [...b, t].slice(-400)); }
+    return { mins, goal, pct, count: done.length };
+  }
+  const stageName = (p) => (p >= 1 ? 'In bloom' : p >= 0.75 ? 'Budding' : p >= 0.4 ? 'Growing' : p > 0 ? 'Sprouting' : 'A seed, waiting');
+  function plantSVG(p, size) {
+    const q = Math.min(1, p);
+    const stem = 8 + q * 46;               // stem height
+    const top = 70 - stem;
+    const leaves = Math.min(6, Math.floor(q * 6.5)) + (p > 1 ? Math.min(3, Math.floor((p - 1) * 3)) : 0);
+    let lv = '';
+    for (let i = 0; i < leaves; i++) {
+      const y = 68 - (i + 1) * (stem / (leaves + 1.2));
+      const side = i % 2 ? 1 : -1;
+      lv += `<path d="M40 ${y} q ${side * 12} ${-8} ${side * 20} ${-2} q ${-side * 9} ${8} ${-side * 20} ${2}z" fill="#9fbf84" opacity="${0.75 + i * 0.04}"/>`;
+    }
+    const bud = p >= 0.75 && p < 1 ? `<ellipse cx="40" cy="${top - 2}" rx="4.5" ry="6" fill="#c9a0b0"/>` : '';
+    let bloom = '';
+    if (p >= 1) {
+      for (let k = 0; k < 6; k++) { const a = (k * Math.PI) / 3; bloom += `<ellipse cx="${40 + Math.cos(a) * 6}" cy="${top - 4 + Math.sin(a) * 6}" rx="5" ry="3.4" transform="rotate(${(a * 180) / Math.PI} ${40 + Math.cos(a) * 6} ${top - 4 + Math.sin(a) * 6})" fill="#e9b8c6"/>`; }
+      bloom += `<circle cx="40" cy="${top - 4}" r="3.6" fill="#f3d58a"/>`;
+    }
+    const seed = p <= 0 ? '<ellipse cx="40" cy="69" rx="3" ry="2" fill="#7b6a4f"/>' : `<path d="M40 70 C ${39} ${70 - stem / 2} ${41} ${70 - stem / 2} 40 ${top}" stroke="#86a96f" stroke-width="2.4" fill="none" stroke-linecap="round"/>`;
+    return `<svg viewBox="0 0 80 100" width="${size}" height="${size * 1.25}" aria-hidden="true">${seed}${lv}${bud}${bloom}
+      <path d="M22 70 h36 l-4 24 h-28z" fill="#b9775a"/><rect x="19" y="66" width="42" height="7" rx="2" fill="#c98a6b"/></svg>`;
+  }
+  function renderPlant() {
+    const g = growth();
+    const mini = $('plant-mini');
+    mini.innerHTML = plantSVG(g.pct, 36);
+    mini.title = `${stageName(g.pct)}: ${g.count} done today`;
+    $('plant-big').innerHTML = plantSVG(g.pct, 96);
+    $('one-progress').textContent = g.count ? `${stageName(g.pct)} · ${g.count} done today` : stageName(g.pct);
+  }
+
+  // ---------- One thing mode ----------
+  // A switch: the dashboard becomes one card with the single best next task. Done / Not now / Skip it.
+  let oneMode = LS.get('hub.oneMode', false) === true;
+  let oneState = 'pick';
+  const notNow = new Set();
+  function scoreTask(x, t) {
+    let s = 0;
+    if (hardLate(x)) s += 1000;
+    if (x.due === t) s += 600;
+    if (x.focus) s += 400;
+    if (x.due === addDays(t, 1)) s += 300;
+    if (isAim(x) && x.due && x.due < t) s += 250;
+    if (x.priority === 'high') s += 150;
+    if (x.priority === 'low') s -= 100;
+    if (estMinutes(x) <= 30) s += 60;
+    if (x.due) s += Math.max(0, 100 - daysBetween(t, x.due) * 10);
+    return s;
+  }
+  const doable = (x) => !x.done && !expired(x) && !['reminder', 'shift'].includes(kindOf(x));
+  function pickOne() {
+    const t = todayStr();
+    return data.tasks.filter((x) => doable(x) && !notNow.has(x.id)).sort((a, b) => scoreTask(b, t) - scoreTask(a, t))[0];
+  }
+  function reasonFor(x, t) {
+    if (hardLate(x)) return 'Overdue';
+    if (x.due && x.due <= t) return isAim(x) ? 'Planned for today' : 'Due today';
+    if (x.due === addDays(t, 1)) return 'Due tomorrow';
+    if (x.focus) return 'On today’s list';
+    if (estMinutes(x) <= 30) return 'A quick one';
+    return x.due ? `Due ${dueLabel(x.due)}` : 'Next up';
+  }
+  function renderOne() {
+    const on = oneMode;
+    $('onething-btn').setAttribute('aria-pressed', String(on));
+    $('onething-btn').textContent = on ? 'Show everything' : 'One thing';
+    $('onething').hidden = !on;
+    document.body.classList.toggle('one-mode', on);
+    if (!on) return;
+    ['dashboard', 'tasks', 'done'].forEach((v) => { $('view-' + v).hidden = true; });
+    const body = $('one-body'); body.textContent = '';
+    const t = todayStr();
+    if (LS.get('hub.oneRest', '') === t && oneState !== 'after') oneState = 'rest';
+    const btn = (label, cls, fn) => { const b = el('button', 'btn ' + cls, label); b.type = 'button'; b.onclick = fn; return b; };
+    if (oneState === 'rest') {
+      body.append(el('h2', 'one-title', 'That’s it for today.'), el('p', 'one-meta', 'Nice work. Your plant will be here tomorrow.'));
+      const row2 = el('div', 'one-actions');
+      row2.append(btn('One more anyway', 'sm', () => { LS.set('hub.oneRest', ''); oneState = 'pick'; renderOne(); }));
+      body.append(row2); return;
+    }
+    if (oneState === 'after') {
+      body.append(el('h2', 'one-title', 'Nice.'), el('p', 'one-meta', 'Your plant grew a little. One more?'));
+      const row2 = el('div', 'one-actions');
+      row2.append(btn('One more', 'grad', () => { oneState = 'pick'; renderOne(); }),
+        btn('Done for today', '', () => { LS.set('hub.oneRest', t); oneState = 'rest'; renderOne(); }));
+      body.append(row2); return;
+    }
+    const x = pickOne();
+    if (!x) {
+      body.append(el('h2', 'one-title', notNow.size ? 'That’s everything for now.' : 'Nothing left to do.'), el('p', 'one-meta', 'Enjoy the rest of your day.'));
+      if (notNow.size) { const r = el('div', 'one-actions'); r.append(btn('Start over', 'sm', () => { notNow.clear(); renderOne(); })); body.append(r); }
+      return;
+    }
+    const colors = colorMap();
+    const kind = kindOf(x);
+    body.append(el('p', 'one-reason', reasonFor(x, t)), el('h2', 'one-title', x.title));
+    const meta = el('p', 'one-meta');
+    if (x.category) { const s = el('i', 'swatch'); s.style.background = colors[x.category] || 'var(--muted)'; meta.append(s, ' ' + x.category + ' · '); }
+    meta.append(kind === 'progress' ? `${x.prog}/${totalOf(x)} done · about ${fmtMin(Math.round(estMinutes(x) / Math.max(1, totalOf(x) - x.prog)))} each` : `about ${fmtMin(estMinutes(x))}`);
+    body.append(meta);
+    const acts = el('div', 'one-actions');
+    const finish = () => {
+      if (kind === 'progress') {
+        const n = x.prog + 1; const total = totalOf(x);
+        addGrowth(n >= total ? 0 : 60);
+        commit([{ type: 'patch', id: x.id, fields: n >= total ? { prog: total, done: true, doneAt: Date.now() } : { prog: n } }]);
+      } else if (kind === 'issue') { resolving = x.id; oneMode = false; LS.set('hub.oneMode', false); location.hash = '#dashboard'; render(); return; }
+      else commit([{ type: 'patch', id: x.id, fields: { done: true, doneAt: Date.now() } }]);
+      track('one.done'); oneState = 'after'; render();
+    };
+    acts.append(btn(kind === 'progress' ? 'Did one' : kind === 'issue' ? 'Sort it out' : 'Done', 'grad', finish),
+      btn('Not now', '', () => { notNow.add(x.id); track('one.notnow'); renderOne(); }),
+      btn('Skip it', 'ghost', () => { track('one.skip'); commit([{ type: 'patch', id: x.id, fields: { done: true, skipped: true, doneAt: Date.now(), focus: false } }]); toast(`Skipped “${x.title}”`, 5000, [{ type: 'patch', id: x.id, fields: { done: false, skipped: false, doneAt: null } }]); }));
+    body.append(acts);
+  }
+
+  // ---------- today plans itself ----------
+  // Once a day: add a few tasks to Today's focus that fit the free time left after shifts. Undo-able.
+  function autoPlan() {
+    if (LS.get('hub.autoplan', true) === false) return;
+    const t = todayStr();
+    if (LS.get('hub.planned', '') === t) return;
+    LS.set('hub.planned', t);
+    const shiftMin = data.tasks.filter((x) => isShift(x) && x.due === t && !x.off).reduce((a, x) => a + shiftMinutes(x), 0);
+    let budget = Math.max(60, 300 - shiftMin * 0.6);
+    const open = data.tasks.filter(doable);
+    const inFocus = new Set(open.filter((x) => x.focus || (x.due && x.due <= addDays(t, 1))).map((x) => x.id));
+    budget -= open.filter((x) => inFocus.has(x.id)).reduce((a, x) => a + Math.min(180, estMinutes(x)), 0);
+    const cands = open.filter((x) => !inFocus.has(x.id) && x.due && x.due <= addDays(t, 5)).sort((a, b) => scoreTask(b, t) - scoreTask(a, t));
+    const ops = [];
+    for (const x of cands) {
+      const m = Math.min(180, estMinutes(x));
+      if (m > budget) continue;
+      budget -= m; ops.push({ type: 'patch', id: x.id, fields: { focus: true } });
+      if (ops.length >= 3) break;
+    }
+    if (ops.length) {
+      commit(ops);
+      toast(`Planned today: added ${ops.length} thing${ops.length > 1 ? 's' : ''} to your focus`, 6000, ops.map((o) => ({ type: 'patch', id: o.id, fields: { focus: false } })));
+    }
   }
 
   // ---------- feedback log & report ----------
@@ -1651,7 +1878,17 @@ Turn the message into changes to the list.
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   };
 
-  window.addEventListener('hashchange', setView);
+  // Clicking a page in the menu leaves One thing mode.
+  window.addEventListener('hashchange', () => { if (oneMode) { oneMode = false; LS.set('hub.oneMode', false); } setView(); });
+  document.querySelectorAll('[data-view]').forEach((a) => a.addEventListener('click', () => {
+    if (oneMode) { oneMode = false; LS.set('hub.oneMode', false); setView(); }
+  }));
+  $('onething-btn').onclick = () => {
+    oneMode = !oneMode; LS.set('hub.oneMode', oneMode); oneState = 'pick'; notNow.clear();
+    track(oneMode ? 'one.on' : 'one.off');
+    render();
+  };
+  $('autoplan-toggle').onchange = (e) => { LS.set('hub.autoplan', e.target.checked); if (e.target.checked) { LS.set('hub.planned', ''); autoPlan(); } };
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { render(); sync(); } });
   setInterval(() => { if (document.visibilityState === 'visible' && tokenValid()) sync(); }, 60000);
   setInterval(updateSyncAge, 30000);
@@ -1664,6 +1901,7 @@ Turn the message into changes to the list.
     else setSync('warn', LS.get('hub.gconsent', false) ? 'Reconnect' : 'Connect');
   } else {
     setSync('warn', 'This device only');
+    autoPlan();
   }
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {

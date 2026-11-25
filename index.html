@@ -49,6 +49,10 @@
         <h1 id="date-label">Today</h1>
         <p class="summary" id="summary"></p>
       </div>
+      <div class="top-side">
+        <div class="plant-mini" id="plant-mini" title="Your plant grows as you finish things today"></div>
+        <button class="btn sm onething-btn" id="onething-btn" type="button" aria-pressed="false">One thing</button>
+      </div>
     </header>
     <form class="bar" id="bar" autocomplete="off">
       <div class="seg" aria-label="What this bar does">
@@ -69,6 +73,15 @@
     <div class="banner" id="banner" hidden></div>
 
     <div class="chips" id="chips" aria-label="Filter by category"></div>
+
+    <!-- One thing mode: a single calm card instead of the dashboard -->
+    <section class="onething" id="onething" hidden>
+      <article class="card one-card">
+        <div class="plant-big" id="plant-big"></div>
+        <p class="one-progress" id="one-progress"></p>
+        <div id="one-body"></div>
+      </article>
+    </section>
 
     <!-- Dashboard -->
     <section class="view" id="view-dashboard">
@@ -96,12 +109,21 @@
             <header class="card-head"><h2>This week</h2><span class="sub" id="week-sub" hidden></span></header>
             <div class="week" id="week-strip"></div>
           </article>
+          <article class="card quiet" id="labs-card" hidden>
+            <header class="card-head"><h2>Labs &amp; tutorials</h2></header>
+            <div class="labs" id="labs-list"></div>
+          </article>
           <article class="card quiet">
             <header class="card-head"><h2>Workload</h2><span class="sub" id="course-sub" hidden></span></header>
             <div id="course-bars" class="bars"></div>
           </article>
         </div>
       </div>
+      <article class="card quiet exams-card" id="exams-card" hidden>
+        <header class="card-head"><h2>Tests &amp; exams</h2></header>
+        <div class="timeline" id="exam-timeline"></div>
+        <p class="tba" id="exam-tba" hidden></p>
+      </article>
       <p class="zone-label">Coming up</p>
       <div class="grid-2 even">
         <article class="card quiet">
@@ -185,6 +207,11 @@
         <option value="claude-sonnet-5-5">Claude Sonnet 5.5 — smarter, ~$0.01 per update</option>
       </select>
       <div class="row"><button class="btn sm" type="button" id="api-save">Save</button><span class="hint" id="api-saved"></span></div>
+    </section>
+
+    <section class="set-block">
+      <h3>Planning</h3>
+      <label class="toggle" for="autoplan-toggle"><input type="checkbox" id="autoplan-toggle"> Plan today for me each morning (fills Today’s focus around your shifts)</label>
     </section>
 
     <section class="set-block">

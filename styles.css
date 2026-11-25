@@ -64,8 +64,9 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   position: sticky; top: 0; height: 100vh;
   display: flex; flex-direction: column; gap: 18px;
   padding: 22px 16px 18px max(16px, env(safe-area-inset-left, 0px));
-  background: rgba(16, 21, 14, 0.45);
+  background: rgba(16, 21, 14, 0.24);
   border-right: 1px solid var(--stroke);
+  backdrop-filter: blur(26px) saturate(150%); -webkit-backdrop-filter: blur(26px) saturate(150%);
   backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
 }
 .brand { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 600; font-size: 17px; padding: 0 8px; }
@@ -109,7 +110,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 }
 .sync span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sync .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
-.sync.ok .dot { background: var(--green); box-shadow: 0 0 10px var(--green); }
+.sync.ok .dot { background: var(--green); box-shadow: 0 0 5px rgba(169, 196, 143, 0.6); }
 .sync.busy .dot { background: var(--cyan); animation: pulse 1s infinite; }
 .sync.warn .dot { background: var(--amber); }
 .sync.err .dot { background: var(--pink); }
@@ -171,9 +172,10 @@ h2 { margin: 0; font-family: var(--font-display); font-size: 15px; font-weight: 
 
 /* ---------- Cards ---------- */
 .card {
-  min-width: 0; background: var(--glass); border-radius: var(--radius);
-  box-shadow: inset 0 0 0 1px var(--stroke), 0 20px 50px -30px rgba(0, 0, 0, 0.8);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  min-width: 0; background: rgba(14, 19, 12, 0.26); border-radius: var(--radius);
+  /* frosted glass: see-through, heavy blur, a thin light edge on top like real glass */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), inset 0 0 0 1px var(--stroke), 0 20px 50px -30px rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(24px) saturate(150%); -webkit-backdrop-filter: blur(24px) saturate(150%);
   padding: 18px;
 }
 .card-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -192,7 +194,7 @@ h2 { margin: 0; font-family: var(--font-display); font-size: 15px; font-weight: 
 /* Hierarchy: focus is the hero; the rest is quieter */
 .hero-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 20px; align-items: start; }
 .stack { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
-.card.quiet { background: rgba(14, 19, 12, 0.30); box-shadow: none; }
+.card.quiet { background: rgba(14, 19, 12, 0.17); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 0 0 1px rgba(220, 232, 205, 0.07); }
 .card.quiet .card-head h2 { font-size: 13.5px; color: var(--muted); letter-spacing: .01em; }
 .focus-card { padding: 22px; }
 .focus-card .card-head h2 { font-size: 20px; }
@@ -214,11 +216,52 @@ h2 { margin: 0; font-family: var(--font-display); font-size: 15px; font-weight: 
 .dot.hi { box-shadow: 0 0 0 2px rgba(214, 138, 108, 0.55); }
 .shift-strip { width: 100%; text-align: center; font-size: 10px; font-weight: 700; color: var(--amber); background: rgba(212, 178, 106, 0.12); border-radius: 6px; padding: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Today's focus + Coming up sections */
+/* Header right side: the plant + One thing switch */
+.top { align-items: flex-end; }
+.top-side { display: flex; align-items: flex-end; gap: 12px; }
+.plant-mini { line-height: 0; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35)); }
+.onething-btn { background: rgba(14, 19, 12, 0.36); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+.onething-btn[aria-pressed="true"] { background: var(--grad); color: var(--on-accent); }
+
+/* One thing mode */
+.onething { display: flex; justify-content: center; padding-top: 4vh; }
+.one-card { width: min(560px, 100%); padding: 34px 32px 30px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px;
+  background: rgba(14, 19, 12, 0.34); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), inset 0 0 0 1px var(--stroke-2), 0 24px 60px -30px rgba(0, 0, 0, 0.7); }
+.plant-big { line-height: 0; filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.35)); }
+.plant-big svg { width: 96px; height: 120px; stroke: none; }
+.plant-mini svg { width: 36px; height: 45px; stroke: none; }
+.one-progress { margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+#one-body { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 100%; }
+.one-reason { margin: 0; font-size: 13px; font-weight: 600; color: var(--violet-2); }
+.one-title { font-size: 24px !important; line-height: 1.25; margin: 0; text-wrap: balance; }
+.one-meta { margin: 0; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
+.one-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 14px; }
+.one-actions .btn { padding: 10px 20px; }
+body.one-mode .chips { display: none; }
+
+/* Labs & tutorials */
+.labs { display: flex; flex-direction: column; gap: 12px; }
+.task.lab-now .task-title { color: var(--violet-2); }
+
+/* Tests & exams timeline */
+.exams-card { padding-bottom: 22px; }
+.timeline { position: relative; height: 128px; margin: 6px 12px 0; }
+.tl-line { position: absolute; left: 0; right: 0; top: 64px; height: 2px; border-radius: 1px; background: linear-gradient(90deg, var(--violet-2), rgba(220, 232, 205, 0.15)); }
+.tl-today { position: absolute; left: 0; top: 72px; font-size: 11.5px; font-weight: 600; color: var(--violet-2); }
+.tl-mark { position: absolute; top: 0; height: 128px; width: 0; }
+.tl-dot { position: absolute; left: -6px; top: 58px; width: 12px; height: 12px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 3px rgba(14, 19, 12, 0.6); }
+.tl-label { position: absolute; left: -10px; bottom: 74px; width: max-content; max-width: 200px; display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; }
+.tl-mark.below .tl-label { bottom: auto; top: 78px; }
+.tl-mark.right .tl-label { left: auto; right: -10px; text-align: right; }
+.tl-label b { font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.tl-label span { color: var(--muted); font-size: 12px; }
+.tba { margin: 12px 0 0; font-size: 12.5px; color: var(--muted); }
+
 /* One input bar: Add / Ask Claude */
 .bar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px; border-radius: 16px;
-  background: rgba(14, 19, 12, 0.55); box-shadow: inset 0 0 0 1px var(--stroke);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  background: rgba(14, 19, 12, 0.36); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), inset 0 0 0 1px var(--stroke);
+  backdrop-filter: blur(24px) saturate(150%); -webkit-backdrop-filter: blur(24px) saturate(150%);
 }
 .bar:focus-within { box-shadow: inset 0 0 0 1px var(--violet); }
 .seg { display: flex; padding: 3px; border-radius: 11px; background: rgba(255, 255, 255, 0.06); flex: none; }
@@ -288,7 +331,7 @@ h2 { margin: 0; font-family: var(--font-display); font-size: 15px; font-weight: 
 .upnext-head { margin: 0 0 4px 4px; font-size: 11.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .upnext-head span { margin-left: 6px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--faint); }
 .upnext .task-title { color: var(--muted); }
-.focus-card { background: rgba(14, 19, 12, 0.52); box-shadow: inset 0 0 0 1px var(--stroke-2), 0 20px 50px -30px rgba(0, 0, 0, 0.8); }
+.focus-card { background: rgba(14, 19, 12, 0.34); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), inset 0 0 0 1px var(--stroke-2), 0 24px 60px -30px rgba(0, 0, 0, 0.7); }
 .pin { all: unset; cursor: pointer; flex: none; align-self: center; font-size: 17px; line-height: 1; padding: 4px 6px; border-radius: 8px; color: var(--faint); }
 .pin:hover { color: var(--amber); background: rgba(212, 178, 106, 0.1); }
 .pin.on { color: var(--amber); }
