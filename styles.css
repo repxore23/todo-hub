@@ -253,17 +253,19 @@ body.one-mode .chips { display: none; }
 
 /* Tests & exams timeline */
 .exams-card { padding-bottom: 22px; }
-.exams-card.in-col .tl-label { max-width: 170px; }
-.timeline { position: relative; height: 128px; margin: 6px 12px 0; }
-.tl-line { position: absolute; left: 0; right: 0; top: 64px; height: 2px; border-radius: 1px; background: linear-gradient(90deg, var(--violet-2), rgba(220, 232, 205, 0.15)); }
-.tl-today { position: absolute; left: 0; top: 72px; font-size: 11.5px; font-weight: 600; color: var(--violet-2); }
-.tl-mark { position: absolute; top: 0; height: 128px; width: 0; }
-.tl-dot { position: absolute; left: -6px; top: 58px; width: 12px; height: 12px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 3px rgba(14, 19, 12, 0.6); }
-.tl-label { position: absolute; left: -10px; bottom: 74px; width: max-content; max-width: 200px; display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; }
-.tl-mark.below .tl-label { bottom: auto; top: 78px; }
-.tl-mark.right .tl-label { left: auto; right: -10px; text-align: right; }
-.tl-label b { font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
-.tl-label span { color: var(--muted); font-size: 12px; }
+.timeline { position: relative; height: 34px; margin: 2px 8px 0; }
+.tl-line { position: absolute; left: 0; right: 0; top: 8px; height: 2px; border-radius: 1px; background: linear-gradient(90deg, var(--violet-2), rgba(220, 232, 205, 0.15)); }
+.tl-today { position: absolute; left: 0; top: 16px; font-size: 11.5px; font-weight: 600; color: var(--violet-2); }
+.tl-mark { position: absolute; top: 0; height: 20px; width: 0; cursor: default; }
+.tl-dot { position: absolute; left: -6px; top: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 3px rgba(14, 19, 12, 0.6); }
+.exam-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; }
+.exam-row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto 76px; gap: 12px; align-items: baseline; padding: 9px 4px; }
+.exam-row + .exam-row { border-top: 1px solid var(--stroke); }
+.exam-dot { width: 8px; height: 8px; border-radius: 50%; align-self: center; }
+.exam-title { font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+.exam-date { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.exam-when { font-size: 12.5px; color: var(--faint); text-align: right; white-space: nowrap; }
+.exam-when.near { color: var(--amber); }
 .tba { margin: 12px 0 0; font-size: 12.5px; color: var(--muted); }
 
 /* One input bar: Add / Ask Claude */
@@ -320,6 +322,8 @@ body.one-mode .chips { display: none; }
 
 /* Shifts */
 .task.shift .bell svg { stroke: var(--amber); }
+.bell.class-ic svg { stroke: var(--cyan); fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.due.class { color: var(--cyan); }
 .task.shift.off .task-title { text-decoration: line-through; color: var(--faint); }
 .resolve-btn.undo { color: var(--muted); background: var(--glass); box-shadow: inset 0 0 0 1px var(--stroke); }
 .shift-strip.off { color: var(--faint); background: var(--glass-2); text-decoration: line-through; }
@@ -491,6 +495,14 @@ select option { background: #1a2017; }
 .fb-types input { accent-color: var(--violet); margin: 0; }
 #fb-text, #fb-out { resize: vertical; border: 0; border-radius: 10px; padding: 9px 12px; background: rgba(255, 255, 255, 0.05); box-shadow: inset 0 0 0 1px var(--stroke); color: var(--ink); font: inherit; }
 #fb-out { font: 12px/1.5 var(--font-mono); }
+#log-text { flex: 1; min-width: 0; }
+.log-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; max-height: 260px; overflow-y: auto; }
+.log-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; align-items: center; padding: 8px 2px; }
+.log-item + .log-item { border-top: 1px solid var(--stroke); }
+.log-text { font-size: 13.5px; overflow-wrap: anywhere; }
+.log-meta { font-size: 11px; color: var(--faint); }
+.log-item .pin { grid-row: 1 / span 2; grid-column: 2; }
+.log-list .empty { font-size: 12.5px; color: var(--faint); padding: 4px 2px; }
 .fb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 220px; overflow-y: auto; }
 .fb-item { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; align-items: baseline; }
 .fb-tag { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 2px 7px; border-radius: 6px; background: var(--glass-2); color: var(--muted); }

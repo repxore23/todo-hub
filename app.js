@@ -38,8 +38,18 @@
   }
 
   // ---------- state ----------
-  const APP_VERSION = 'hub-v23';
-  const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [] });
+  const APP_VERSION = 'hub-v25';
+  const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [], log: [] });
+  // Shared notes: short dated lines both Claudes (and the user) add so the other one has the context.
+  const LOG_MAX = 60;
+  const LOG_SOURCES = ['app', 'box', 'chat'];
+  function normalizeLog(e) {
+    if (!e || typeof e !== 'object') return null;
+    const text = String(e.text || '').trim().replace(/\s+/g, ' ').slice(0, 400);
+    if (!text) return null;
+    const at = Number(e.at) || Date.now();
+    return { id: String(e.id || newId()), at, text, source: LOG_SOURCES.includes(e.source) ? e.source : 'chat' };
+  }
   const FB_TYPES = ['look', 'feature', 'issue', 'idea'];
   function normalizeFeedback(f) {
     if (!f || typeof f !== 'object') return null;
@@ -79,7 +89,7 @@
       doneAt: t.done ? (Number(t.doneAt) || Date.now()) : null,
       focus: Boolean(t.focus),
       est: Math.max(0, Math.min(6000, Math.round(Number(t.est) || 0))), // minutes; 0 = guess from the title
-      kind: ['task', 'reminder', 'progress', 'issue', 'shift'].includes(t.kind) ? t.kind : '', // '' = guess from the title
+      kind: ['task', 'reminder', 'progress', 'issue', 'shift', 'class'].includes(t.kind) ? t.kind : '', // '' = guess from the title
       off: Boolean(t.off), // shifts: not working that day (requested off, cancelled)
       skipped: Boolean(t.done && t.skipped), // cleared without doing it: not counted as "done"
       repeat: t.repeat === 'weekly' ? 'weekly' : '', // recurring: next one appears when this one is done / its day passes
@@ -100,6 +110,7 @@
       tasks: tasks.map(normalizeTask).filter(Boolean),
       processedNotes: Array.isArray(d.processedNotes) ? d.processedNotes.slice(-300) : [],
       feedback: Array.isArray(d.feedback) ? d.feedback.map(normalizeFeedback).filter(Boolean).slice(-200) : [],
+      log: Array.isArray(d.log) ? d.log.map(normalizeLog).filter(Boolean).slice(-LOG_MAX) : [],
     };
   }
   const newId = () => 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -144,6 +155,13 @@
     } else if (op.type === 'fb-clear') {
       const ids = new Set(op.ids || []);
       d.feedback = d.feedback.filter((f) => !ids.has(f.id));
+    } else if (op.type === 'log') {
+      const e = normalizeLog(op.entry);
+      if (!Array.isArray(d.log)) d.log = [];
+      if (e && !d.log.some((x) => x.id === e.id)) { d.log.push(e); d.log.sort((a, b) => a.at - b.at); d.log = d.log.slice(-LOG_MAX); }
+    } else if (op.type === 'log-del') {
+      const ids = new Set(op.ids || []);
+      d.log = (d.log || []).filter((x) => !ids.has(x.id));
     } else applyOp(d.tasks, op);
   }
   function inverseOps(ops) {
@@ -212,6 +230,11 @@
         if (e) { ops.push({ type: 'fb', entry: e }); did.push(`noted app feedback: “${e.text.slice(0, 60)}${e.text.length > 60 ? '…' : ''}”`); }
         continue;
       }
+      if (action === 'log' || action === 'remember') {
+        const e = normalizeLog({ text: c.text || c.note || c.title, source });
+        if (e) { ops.push({ type: 'log', entry: e }); did.push(`remembered: “${e.text.slice(0, 60)}${e.text.length > 60 ? '…' : ''}”`); }
+        continue;
+      }
       if (action === 'add') {
         const task = newTask({ title: c.title, due: c.due, category: c.category, priority: c.priority });
         if (!task) { skipped.push('an add with no title'); continue; }
@@ -253,7 +276,7 @@
         if (c.priority) f.priority = normPri(c.priority);
         const fv = String(c.focus === undefined ? '' : c.focus).toLowerCase();
         if (fv === 'yes' || fv === 'true') f.focus = true; else if (fv === 'no' || fv === 'false') f.focus = false;
-        if (['task', 'reminder', 'progress', 'issue', 'shift'].includes(c.kind)) f.kind = c.kind;
+        if (['task', 'reminder', 'progress', 'issue', 'shift', 'class'].includes(c.kind)) f.kind = c.kind;
         if (['due', 'aim'].includes(c.dateKind)) f.dateKind = c.dateKind;
         if (c.off === true || c.off === 'true' || c.off === 'yes') f.off = true;
         else if (c.off === false || c.off === 'false' || c.off === 'no') f.off = false;
@@ -349,8 +372,9 @@
   const ABOUT_FOR_CLAUDE = [
     'This is the To-Do Hub task list (app: https://repxore23.github.io/todo-hub/). It is the single source of truth for the user\'s to-dos and deadlines; it replaces the old "To-do & deadlines" doc.',
     'You cannot edit this file. To change the list, create a NEW Google Drive file titled todo-hub-inbox-YYYYMMDD-HHMM.json (contentMimeType text/plain, disableConversionToGoogleType true) containing {"changes":[...]}. The app applies it next time it opens, then deletes it.',
-    'Change actions: {"action":"add","title":...,"due":"YYYY-MM-DD","category":...,"priority":"high|med|low","dateKind":"due|aim","repeat":"weekly","est":minutes} · {"action":"complete","task":"<exact title>","note":...} · {"action":"skip","task":...,"note":...} when the user won\'t do it (not counted as done) · {"action":"update","task":"<exact title>", only changed fields; "due":"none" clears; "focus":"yes|no"; "progress":N; "off":true for a shift day off; "note":...} · {"action":"resolve","task":...,"note":...} for missed/missing items · {"action":"reopen"|"delete","task":...} · {"action":"feedback","type":"look|feature|issue|idea","text":...} for comments about the app itself.',
-    'Meanings: "due" = real deadline (overdue when missed); "aim" = the user\'s own target (never overdue). Reminders ("info only", "last day") and work shifts are events, never complete them. Progress tasks (lecture batches) use "progress", not complete. Read each task\'s "note" for context the user wrote. Only count real deadlines as overdue.',
+    'Change actions: {"action":"add","title":...,"due":"YYYY-MM-DD","category":...,"priority":"high|med|low","dateKind":"due|aim","repeat":"weekly","est":minutes} · {"action":"complete","task":"<exact title>","note":...} · {"action":"skip","task":...,"note":...} when the user won\'t do it (not counted as done) · {"action":"update","task":"<exact title>", only changed fields; "due":"none" clears; "focus":"yes|no"; "progress":N; "off":true for a shift day off; "note":...} · {"action":"resolve","task":...,"note":...} for missed/missing items · {"action":"reopen"|"delete","task":...} · {"action":"feedback","type":"look|feature|issue|idea","text":...} for comments about the app itself · {"action":"log","text":"<one short line>"} to add to the shared notes.',
+    'Shared notes ("log" field): short dated lines about the user\'s situation, decisions, preferences and plans, written by the user, the in-app Claude box and Claude chat, so each knows what the other heard. Read them before answering. Add one (action "log") when the user says something that matters later and doesn\'t belong on a single task; skip small talk and anything already logged.',
+    'Meanings: "due" = real deadline (overdue when missed); "aim" = the user\'s own target (never overdue). Reminders ("info only", "last day"), work shifts and class sessions (kind "class": a lab or tutorial itself, e.g. "Lab 5: Gel electrophoresis", attended on its date) are events, never complete them; they clear after their day. Pre-lab quizzes, post-lab sheets and lab assignments are normal tasks. If the user missed a lab/tutorial, update it with "kind":"issue" and a "note". Progress tasks (lecture batches) use "progress", not complete. Read each task\'s "note" for context the user wrote. Only count real deadlines as overdue.',
   ].join(' ');
   async function writeFile(id, d) {
     await gfetch(`${UPLOAD}/files/${id}?uploadType=media`, { method: 'PATCH', headers: { 'Content-Type': 'text/plain; charset=UTF-8' }, body: JSON.stringify({ about: ABOUT_FOR_CLAUDE, ...d }, null, 1) });
@@ -473,7 +497,7 @@
         items: {
           type: 'object',
           properties: {
-            action: { type: 'string', enum: ['add', 'complete', 'skip', 'resolve', 'reopen', 'update', 'delete', 'feedback'] },
+            action: { type: 'string', enum: ['add', 'complete', 'skip', 'resolve', 'reopen', 'update', 'delete', 'feedback', 'log'] },
             task: { type: 'string' },
             title: { type: 'string' },
             due: { type: 'string' },
@@ -509,6 +533,9 @@ ${JSON.stringify(list)}
 
 Categories in use: ${JSON.stringify(categories())}
 
+Shared notes about the user (oldest first; written by the user, by you, and by Claude chat; use them as context):
+${logForPrompt()}
+
 The user wrote:
 """${msg.slice(0, 4000)}"""
 
@@ -518,13 +545,19 @@ Turn the message into changes to the list.
 - For update: fill only the fields that change and leave the rest "". Use "due": "none" to remove a date.
 - Prefer "complete" when the user finished something; use "skip" when they're not going to do it (it's cleared but not counted as done); use "delete" only for mistakes or duplicates.
 - Resolve relative dates ("tomorrow", "Friday" = the next Friday after today) against today.
-- Kinds: "reminder" tasks are notices (they expire on their own; never complete them). "progress" tasks have parts (e.g. 9 lecture recordings): set "progress" to the number of parts done so far, e.g. "3" (it completes itself at the total); otherwise leave "progress" "". "issue" tasks are missed or missing things: use action "resolve" with a short "note" saying what happened, instead of "complete".
+- Kinds: "reminder" tasks are notices (they expire on their own; never complete them). "class" tasks are a lab or tutorial session the user attends on its date (they clear by themselves; never complete them; the prep and follow-up work are separate normal tasks). "progress" tasks have parts (e.g. 9 lecture recordings): set "progress" to the number of parts done so far, e.g. "3" (it completes itself at the total); otherwise leave "progress" "". "issue" tasks are missed or missing things: use action "resolve" with a short "note" saying what happened, instead of "complete".
 - If the user says anything about the To-Do Hub app itself (how it looks, how it works, a problem, an idea for it), log it with action "feedback": "title" = the feedback in one clear sentence, "category" = "look", "feature", "issue" or "idea", other fields "".
 - When the user says they're behind on lectures, add one catch-up task per course titled like "Catch-up: BIOA01 lectures 4–6" or "Catch-up: CHMA10 lectures (5 recordings)" so the app shows a progress counter.
 - Read each task's "note". If a resolved note implies a follow-up (e.g. "got notes, still need to review"), add that follow-up as a new task. Leave "note" "" unless you are resolving.
 - "focus" puts a task on Today's focus (the list of what to work on today): "yes" to add it, "no" to take it off, "" to leave it. Use it when the user says they'll work on something today, or asks to plan today.
+- Shared notes: when the user tells you something that would change how to help them later and doesn't belong on one task (their situation, a decision, a preference, a plan, why something slipped, "remember that…"), add action "log" with "note" = one short line in third person (the app adds the date), e.g. "Sick this week; pushing study aims back 2–3 days". Other fields "". Not for small talk, not for things already in the shared notes, not for details that belong in a task's note.
 - Never add tasks the user didn't mention.
 "reply": one short sentence saying what changed. If the message is a question about the list, return no changes and answer it in "reply" in at most 4 short plain-text lines.`;
+  }
+  function logForPrompt() {
+    const recent = (data.log || []).slice(-40);
+    if (!recent.length) return '(none yet)';
+    return recent.map((e) => `- ${new Date(e.at).toISOString().slice(0, 10)}: ${e.text}`).join('\n');
   }
   async function callClaude(msg) {
     const key = LS.get('hub.apiKey', '');
@@ -660,9 +693,9 @@ Turn the message into changes to the list.
       // Today's focus in three zones:
       //  1. Due today / tomorrow: real deadlines only (plus anything overdue).
       //  2. Working on: things you pinned, own targets (aims) that have arrived, issues.
-      //  3. Heads-up: reminders and work shifts today, in one quiet line each.
+      //  3. Heads-up: reminders and work shifts today, labs/tutorials today or tomorrow, one quiet line each.
       const tomorrow = addDays(t, 1);
-      const isNotice = (x) => kindOf(x) === 'reminder' || isShift(x);
+      const isNotice = (x) => EVENT_KINDS.includes(kindOf(x));
       const dueRank = (x) => (x.due < t ? 0 : x.due === t ? 1 : 2);
       const dueZone = open.filter((x) => !isNotice(x) && !isAim(x) && x.due && x.due <= tomorrow)
         .sort((a, b) => dueRank(a) - dueRank(b) || byPriority(a, b));
@@ -671,7 +704,8 @@ Turn the message into changes to the list.
           && (x.focus || (isAim(x) && x.due && x.due <= t) || kindOf(x) === 'issue'))
         .sort((a, b) => Number(b.focus) - Number(a.focus) || (a.due || '9999').localeCompare(b.due || '9999') || byPriority(a, b));
       workZone.forEach((x) => zoneIds.add(x.id));
-      const heads = open.filter((x) => isNotice(x) && x.due === t);
+      const heads = open.filter((x) => isNotice(x) && (x.due === t || (kindOf(x) === 'class' && x.due === tomorrow)))
+        .sort(byDue);
       fillZone('zone-due', 'focus-due', dueZone, colors);
       // Always show the deadline zone, so "nothing due" is a clear, reassuring answer.
       $('zone-due').hidden = false;
@@ -780,16 +814,24 @@ Turn the message into changes to the list.
     return n;
   }
   const totalOf = (x) => (x.total > 0 ? x.total : autoTotal(x));
+  // Events happen on their day and then clear themselves; they're never homework you can "do now".
+  const EVENT_KINDS = ['reminder', 'shift', 'class'];
+  // Class sessions you attend (a lab or tutorial itself), not the work around them
+  // (pre-lab quizzes, post-lab sheets, lab assignments and reports stay normal tasks).
+  const isClassTitle = (s) => /^\s*(lab|tutorial|tut|practical|talklab)\s*#?\s*\d+\b/i.test(s)
+    && !/quiz|assignment|report|upload|data ?sheet|post-?lab|pre-?lab|notebook|worksheet|submission|questions|write-?up|homework/i.test(s);
   function kindOf(x) {
     if (x.kind) return x.kind;
     if (isShift(x)) return 'shift';
     if (/info only|last day|\breminder\b/i.test(x.title)) return 'reminder';
     if (/\b(missing|missed)\b/i.test(x.title)) return 'issue';
+    if (isClassTitle(x.title)) return 'class';
     if (totalOf(x) > 1) return 'progress';
     return 'task';
   }
+  const classWord = (x) => (/^\s*(tutorial|tut)\b/i.test(x.title) ? 'tutorial' : /^\s*practical/i.test(x.title) ? 'practical' : 'lab');
   // Reminders and shifts are events: once their day has passed they quietly disappear.
-  const expired = (x) => ['reminder', 'shift'].includes(kindOf(x)) && x.due && x.due < todayStr();
+  const expired = (x) => EVENT_KINDS.includes(kindOf(x)) && x.due && x.due < todayStr();
   // Due = a real deadline (turns red when missed). Aim = a target you set yourself (never nags).
   // Catch-ups, study/practice work and issues default to Aim; everything else to Due.
   function isAim(x) {
@@ -797,7 +839,7 @@ Turn the message into changes to the list.
     const k = kindOf(x);
     return k === 'progress' || k === 'issue' || /catch[- ]?up|\bstudy(ing)?\b(?!\s*tracker)|\breview\b(?!\s*(form|quiz|assignment))|practice|reading/i.test(x.title);
   }
-  const hardLate = (x) => !x.done && !!x.due && x.due < todayStr() && !isAim(x) && !['reminder', 'shift'].includes(kindOf(x));
+  const hardLate = (x) => !x.done && !!x.due && x.due < todayStr() && !isAim(x) && !EVENT_KINDS.includes(kindOf(x));
   const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 864e5);
   // "~2 a day to finish by Mon" for progress tasks with an aim date.
   function pacing(x) {
@@ -815,7 +857,7 @@ Turn the message into changes to the list.
   // Time estimates: the task's own "est" (minutes) when set, otherwise a guess from its title.
   function estMinutes(x) {
     const kind = kindOf(x);
-    if (kind === 'reminder') return 0;
+    if (kind === 'reminder' || kind === 'class') return 0; // a class is scheduled time, not homework
     if (kind === 'progress') {
       const total = totalOf(x); const left = Math.max(0, total - x.prog);
       return x.est > 0 ? Math.round((x.est * left) / Math.max(1, total)) : left * 60;
@@ -953,7 +995,7 @@ Turn the message into changes to the list.
   // Quick wins: short tasks whose deadline is still more than a week away.
   // Once a deadline is within 7 days the task shows in Coming up instead, then in Today's focus.
   function quickWins(t) {
-    return data.tasks.filter((x) => !x.done && !x.focus && !isShift(x) && kindOf(x) !== 'reminder' && x.due && x.due > addDays(t, 7)
+    return data.tasks.filter((x) => !x.done && !x.focus && !EVENT_KINDS.includes(kindOf(x)) && x.due && x.due > addDays(t, 7)
       && estMinutes(x) <= 60 && !/info only/i.test(x.title)
       && (filterCat === 'all' || x.category === filterCat)).sort(byDue);
   }
@@ -1042,7 +1084,7 @@ Turn the message into changes to the list.
   function row(x, colors, compact) {
     const kind = kindOf(x);
     const total = totalOf(x);
-    const li = el('li', 'task' + (x.done ? ' done' : '') + (x.skipped ? ' skipped' : '') + (compact ? ' compact' : '') + (kind === 'reminder' ? ' reminder' : '')
+    const li = el('li', 'task' + (x.done ? ' done' : '') + (x.skipped ? ' skipped' : '') + (compact ? ' compact' : '') + (kind === 'reminder' ? ' reminder' : '') + (kind === 'class' ? ' class' : '')
       + (kind === 'shift' ? ' shift' + (x.off ? ' off' : '') : '')
       + (x.priority === 'high' ? ' hi' : x.priority === 'low' ? ' lo' : '') + (x.focus ? ' pinned' : ''));
     let cb;
@@ -1051,6 +1093,13 @@ Turn the message into changes to the list.
       cb = el('span', 'bell');
       cb.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
       cb.title = x.off ? 'Day off' : 'Work shift: it goes away by itself after the day';
+    } else if (kind === 'class' && !x.done) {
+      // A lab or tutorial you attend: a small flask/calendar mark instead of a checkbox.
+      cb = el('span', 'bell class-ic');
+      cb.innerHTML = /lab|practical/i.test(classWord(x))
+        ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6L4.5 18.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3"/><path d="M7.5 15h9"/></svg>'
+        : '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>';
+      cb.title = `Class session: you attend it on the day, then it clears by itself`;
     } else if (kind === 'reminder' && !x.done) {
       cb = el('span', 'bell');
       cb.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>';
@@ -1109,6 +1158,11 @@ Turn the message into changes to the list.
           label = x.off ? `day off · ${label}` : label;
         } else if (kind === 'reminder') {
           label = x.due === t ? 'today' : label;
+        } else if (kind === 'class') {
+          // "lab tomorrow" / "tutorial today", never "due".
+          const w = classWord(x);
+          cls += ' class';
+          label = x.due === t ? `${w} today` : x.due === addDays(t, 1) ? `${w} tomorrow` : label;
         } else if (aim) {
           // Own targets: soft wording, never red.
           cls += ' aim';
@@ -1167,6 +1221,19 @@ Turn the message into changes to the list.
         if (!x.off) toast('Marked as a day off.', 5000, [{ type: 'patch', id: x.id, fields: { off: false } }]);
       };
       li.append(off);
+      return li;
+    }
+    if (kind === 'class' && !x.done) {
+      // Couldn't make it? It turns into something to sort out (make-up, notes, emailing the TA).
+      const miss = el('button', 'resolve-btn', 'Missed it'); miss.type = 'button';
+      miss.title = `Didn't go to this ${classWord(x)}: keep it as something to sort out`;
+      miss.setAttribute('aria-label', miss.title + ': ' + x.title);
+      miss.onclick = () => {
+        track('class.missed');
+        commit([{ type: 'patch', id: x.id, fields: { kind: 'issue' } }]);
+        toast(`Kept “${x.title}” to sort out. Resolve it when it’s handled.`, 6000, [{ type: 'patch', id: x.id, fields: { kind: '' } }]);
+      };
+      li.append(miss);
       return li;
     }
     if (kind === 'issue' && !x.done && resolving !== x.id) {
@@ -1316,7 +1383,7 @@ Turn the message into changes to the list.
     pr.value = x.priority;
     const auto = { ...x, kind: '', total: 0, est: 0 };
     const ki = el('select'); ki.id = 'edit-kind'; ki.setAttribute('aria-label', 'Type');
-    const kindNames = { task: 'Task (checkbox)', reminder: 'Reminder', progress: 'Progress (parts)', issue: 'Issue (resolve)' };
+    const kindNames = { task: 'Task (checkbox)', class: 'Lab / tutorial (attend)', reminder: 'Reminder', progress: 'Progress (parts)', issue: 'Issue (resolve)', shift: 'Work shift' };
     [['', `Type: auto (${kindNames[kindOf(auto)]})`], ...Object.entries(kindNames)].forEach(([v, l]) => { const o = el('option', null, l); o.value = v; ki.append(o); });
     ki.value = x.kind;
     const es = el('select'); es.id = 'edit-est'; es.setAttribute('aria-label', 'Time needed');
@@ -1400,6 +1467,7 @@ Turn the message into changes to the list.
 
   // ---------- settings ----------
   function openSettings() {
+    renderLogList();
     $('api-key').value = LS.get('hub.apiKey', '');
     $('api-model').value = LS.get('hub.model', 'claude-haiku-5-5');
     $('autoplan-toggle').checked = LS.get('hub.autoplan', true) !== false;
@@ -1580,20 +1648,29 @@ Turn the message into changes to the list.
     const tba = all.filter((x) => !x.due);
     $('exams-card').hidden = !dated.length && !tba.length;
     const tl = $('exam-timeline'); tl.textContent = ''; tl.hidden = !dated.length;
+    $('exams-card').querySelectorAll('.exam-list').forEach((n) => n.remove());
     if (dated.length) {
       const span = Math.max(14, daysBetween(t, dated[dated.length - 1].due) + 4);
+      // The line shows how they're spread out (dots only, so exams close together never overlap);
+      // the names sit in a dated list underneath.
       tl.append(el('div', 'tl-line'), el('span', 'tl-today', 'Today'));
-      dated.forEach((x, i) => {
+      const list = el('ul', 'exam-list');
+      dated.forEach((x) => {
         const d = daysBetween(t, x.due);
-        const pos = (d / span) * 100;
-        const m = el('div', 'tl-mark' + (i % 2 ? ' below' : '') + (pos > 70 ? ' right' : ''));
-        m.style.left = pos + '%';
-        m.style.setProperty('--c', colors[x.category] || 'var(--violet-2)');
-        const lab = el('div', 'tl-label');
-        lab.append(el('b', null, x.title), el('span', null, `${dueLabel(x.due)} · ${d === 0 ? 'today' : d === 1 ? 'tomorrow' : `in ${d} days`}`));
-        m.append(el('i', 'tl-dot'), lab);
+        const c = colors[x.category] || 'var(--violet-2)';
+        const when = d === 0 ? 'today' : d === 1 ? 'tomorrow' : `in ${d} days`;
+        const m = el('div', 'tl-mark');
+        m.style.left = (d / span) * 100 + '%';
+        m.style.setProperty('--c', c);
+        m.title = `${x.title} · ${dueLabel(x.due)}`;
+        m.append(el('i', 'tl-dot'));
         tl.append(m);
+        const li = el('li', 'exam-row');
+        const dot = el('i', 'exam-dot'); dot.style.background = c;
+        li.append(dot, el('span', 'exam-title', x.title), el('span', 'exam-date', dueLabel(x.due)), el('span', 'exam-when' + (d <= 7 ? ' near' : ''), when));
+        list.append(li);
       });
+      tl.after(list);
     }
     const tbaEl = $('exam-tba');
     tbaEl.hidden = !tba.length;
@@ -1619,7 +1696,7 @@ Turn the message into changes to the list.
   function growth() {
     const t = todayStr();
     const g = LS.get('hub.growth', { date: t, extra: 0 });
-    const done = data.tasks.filter((x) => x.done && !x.skipped && x.doneAt && fmt(new Date(x.doneAt)) === t && !['reminder', 'shift'].includes(kindOf(x)));
+    const done = data.tasks.filter((x) => x.done && !x.skipped && x.doneAt && fmt(new Date(x.doneAt)) === t && !EVENT_KINDS.includes(kindOf(x)));
     const mins = done.reduce((a, x) => a + doneValue(x), 0) + (g.date === t ? g.extra : 0);
     const working = data.tasks.some((x) => isShift(x) && x.due === t && !x.off);
     const goal = working ? 60 : 120;
@@ -1676,7 +1753,7 @@ Turn the message into changes to the list.
     if (x.due) s += Math.max(0, 100 - daysBetween(t, x.due) * 10);
     return s;
   }
-  const doable = (x) => !x.done && !expired(x) && !['reminder', 'shift'].includes(kindOf(x));
+  const doable = (x) => !x.done && !expired(x) && !EVENT_KINDS.includes(kindOf(x));
   function pickOne() {
     const t = todayStr();
     return data.tasks.filter((x) => doable(x) && !notNow.has(x.id)).sort((a, b) => scoreTask(b, t) - scoreTask(a, t))[0];
@@ -1829,6 +1906,31 @@ Turn the message into changes to the list.
     lines.push(`- Categories: ${categories().join(', ')}`);
     return lines.join('\n');
   }
+
+  // ---------- shared notes (Settings) ----------
+  const LOG_SRC = { app: 'you', box: 'Claude box', chat: 'Claude chat' };
+  function renderLogList() {
+    const ul = $('log-list'); ul.textContent = '';
+    const log = data.log || [];
+    if (!log.length) { ul.append(el('li', 'empty', 'Nothing yet.')); return; }
+    [...log].reverse().forEach((e) => {
+      const li = el('li', 'log-item');
+      const del = el('button', 'pin', '✕'); del.type = 'button';
+      del.title = 'Remove'; del.setAttribute('aria-label', 'Remove note: ' + e.text);
+      del.onclick = () => { commit([{ type: 'log-del', ids: [e.id] }]); renderLogList(); };
+      li.append(el('span', 'log-text', e.text), del, el('span', 'log-meta', `${shortDate(e.at)} · ${LOG_SRC[e.source]}`));
+      ul.append(li);
+    });
+  }
+  function addLogFromInput() {
+    const text = $('log-text').value.trim();
+    if (!text) return;
+    commit([{ type: 'log', entry: { id: newId(), at: Date.now(), source: 'app', text } }]);
+    $('log-text').value = '';
+    renderLogList();
+  }
+  $('log-add').onclick = addLogFromInput;
+  $('log-text').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addLogFromInput(); } });
 
   // ---------- wire up ----------
   $('bar-input').addEventListener('input', (e) => { if (barMode === 'add') quickPreview(parseQuick(e.target.value), $('quick-preview')); });

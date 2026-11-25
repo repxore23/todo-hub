@@ -201,7 +201,7 @@
 
     <section class="set-block">
       <h3>Claude box</h3>
-      <p class="hint">Paste an Anthropic API key to turn on the “Tell Claude” box. It's only used when you press Update, and it's saved on this device only.</p>
+      <p class="hint">Paste an Anthropic API key to turn on Ask Claude. It's only used when you press Ask, and it's saved on this device only.</p>
       <label for="api-key">API key</label>
       <input id="api-key" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
       <label for="api-model">Model</label>
@@ -210,6 +210,13 @@
         <option value="claude-sonnet-5-5">Claude Sonnet 5.5 — smarter, ~$0.01 per update</option>
       </select>
       <div class="row"><button class="btn sm" type="button" id="api-save">Save</button><span class="hint" id="api-saved"></span></div>
+    </section>
+
+    <section class="set-block">
+      <h3>Shared notes</h3>
+      <p class="hint">What the Claude box and Claude chat have noted about you, so each knows what you told the other. Add your own or remove any.</p>
+      <div class="row"><input id="log-text" type="text" maxlength="400" placeholder="e.g. Sick this week, going easy on study" aria-label="Add a shared note"><button class="btn sm" type="button" id="log-add">Add</button></div>
+      <ul class="log-list" id="log-list"></ul>
     </section>
 
     <section class="set-block">
