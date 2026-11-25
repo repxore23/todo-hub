@@ -38,7 +38,7 @@
   }
 
   // ---------- state ----------
-  const APP_VERSION = 'hub-v21';
+  const APP_VERSION = 'hub-v22';
   const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [] });
   const FB_TYPES = ['look', 'feature', 'issue', 'idea'];
   function normalizeFeedback(f) {
@@ -702,6 +702,7 @@ Turn the message into changes to the list.
       }
       renderLabs(open, t, colors);
       renderExams(t, colors);
+      balanceHero();
       // Labs & tutorials have their own panel, so they're left out of the Courses list.
       renderSections(open.filter((x) => !zoneIds.has(x.id) && !isLabItem(x) && x.due && x.due > t && x.due <= addDays(t, 7)).sort(byDue), colors);
     } else if (view === 'tasks') {
@@ -1045,6 +1046,7 @@ Turn the message into changes to the list.
       + (kind === 'shift' ? ' shift' + (x.off ? ' off' : '') : '')
       + (x.priority === 'high' ? ' hi' : x.priority === 'low' ? ' lo' : '') + (x.focus ? ' pinned' : ''));
     let cb;
+    let progAct = null; // − / + buttons sit at the row's right edge, so every title lines up
     if (kind === 'shift') {
       cb = el('span', 'bell');
       cb.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
@@ -1058,7 +1060,6 @@ Turn the message into changes to the list.
       cb.title = 'Missed or missing: resolve it instead of ticking it off';
     } else if (kind === 'progress' && !x.done) {
       // − 3/9 +  ; at the total the + becomes ✓, so finishing is always a deliberate tap.
-      cb = el('div', 'prog-ctl');
       const minus = el('button', 'pc-btn', '−'); minus.type = 'button';
       minus.disabled = x.prog <= 0;
       minus.setAttribute('aria-label', 'One less done: ' + x.title);
@@ -1076,7 +1077,10 @@ Turn the message into changes to the list.
           toast(`Finished “${x.title}”`, 6000, [{ type: 'patch', id: x.id, fields: { done: false, doneAt: null } }]);
         } else commit([{ type: 'patch', id: x.id, fields: { prog: x.prog + 1 } }]);
       };
-      cb.append(minus, count, plus);
+      cb = count;
+      cb.classList.add('prog-lead');
+      progAct = el('div', 'prog-ctl');
+      progAct.append(minus, plus);
     } else {
       cb = el('input', 'check');
       cb.type = 'checkbox'; cb.checked = x.done;
@@ -1145,6 +1149,7 @@ Turn the message into changes to the list.
       if (handling === x.id) body.append(handleBox(x));
     }
     li.append(cb, body);
+    if (progAct) li.append(progAct);
     if (hardLate(x) && handling !== x.id) {
       const hb = el('button', 'resolve-btn', 'Handle'); hb.type = 'button';
       hb.title = 'Missed deadline: submitted late, got an extension, or skipping it';
@@ -1516,6 +1521,20 @@ Turn the message into changes to the list.
   // ---------- labs & tutorials panel, tests & exams timeline ----------
   const isLabItem = (x) => !isShift(x) && /\blab\b|\blab ?#?\d|pre-?lab|post-?lab|tutorial|practical|talklab/i.test(x.title);
   const isExam = (x) => /\b(final exam|exam|term test|midterm|final)\b/i.test(x.title) && !/viewing|conflict|feedback|review/i.test(x.title);
+  // The two top columns change height with what's due. Put Workload under whichever is shorter,
+  // so there's never a big empty gap beside one of them. (One column on narrow screens: keep it last.)
+  function balanceHero() {
+    const L = $('hero-left'), R = $('hero-right'), w = $('workload-card');
+    if (!L || !R || !w) return;
+    if (window.matchMedia('(max-width: 1100px)').matches) { if (w.parentNode !== R) R.append(w); return; }
+    L.append(w);
+    const left = L.offsetHeight - w.offsetHeight;
+    const right = R.offsetHeight;
+    if (right < left) R.append(w);
+  }
+  let balanceTimer = 0;
+  window.addEventListener('resize', () => { clearTimeout(balanceTimer); balanceTimer = setTimeout(() => { if (view === 'dashboard') balanceHero(); }, 120); });
+
   function renderLabs(open, t, colors) {
     const items = open.filter((x) => isLabItem(x) && x.due && x.due <= addDays(t, 14) && kindOf(x) !== 'reminder').sort(byDue);
     $('labs-card').hidden = !items.length;

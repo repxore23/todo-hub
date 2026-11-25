@@ -176,9 +176,9 @@ h2 { margin: 0; font-family: var(--font-display); font-size: 15px; font-weight: 
   /* frosted glass: see-through, heavy blur, a thin light edge on top like real glass */
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), inset 0 0 0 1px var(--stroke), 0 20px 50px -30px rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(24px) saturate(150%); -webkit-backdrop-filter: blur(24px) saturate(150%);
-  padding: 18px;
+  padding: 20px;
 }
-.card-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.card-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
 .sub { color: var(--faint); font-size: 12.5px; }
 .view { display: flex; flex-direction: column; gap: 20px; }
 .grid-2 { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 20px; }
@@ -198,10 +198,16 @@ h2 { margin: 0; font-family: var(--font-display); font-size: 15px; font-weight: 
 .card.quiet .card-head h2 { font-size: 13.5px; color: var(--muted); letter-spacing: .01em; }
 .focus-card { padding: 22px; }
 .focus-card .card-head h2 { font-size: 20px; }
+#labs-card .card-head h2 { font-size: 19px; color: var(--ink); letter-spacing: -.005em; }
 .zone-label { margin: 8px 0 -8px 2px; font-family: var(--font-display); font-size: 17px; font-weight: 500; color: var(--ink); text-shadow: 0 1px 10px rgba(10, 14, 9, 0.6); }
 
 /* Week ahead: seven compact day cells with dots */
 .week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+/* Full-width week strip: a slim row, with the title beside the days instead of above them */
+.week-card { display: flex; align-items: center; gap: 20px; padding: 12px 20px; }
+.week-card .card-head { margin: 0; flex: none; flex-direction: column; gap: 2px; width: 92px; }
+.week-card .week { flex: 1; min-width: 0; }
+@media (max-width: 860px) { .week-card { flex-direction: column; align-items: stretch; gap: 10px; } .week-card .card-head { flex-direction: row; width: auto; } }
 .day {
   min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px 8px; border-radius: 12px; cursor: default;
 }
@@ -355,6 +361,8 @@ body.one-mode .chips { display: none; }
   flex: none; display: inline-flex; align-items: center; gap: 0; height: 22px; margin-top: 0;
 }
 .pc-count { font: 600 11.5px var(--font-mono); color: var(--cyan); min-width: 30px; text-align: center; }
+.prog-lead { min-width: 0; height: 22px; display: grid; place-items: center; letter-spacing: -.02em; }
+.prog-ctl { gap: 2px; align-self: start; }
 .pc-btn { all: unset; cursor: pointer; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 7px; color: var(--cyan); font-weight: 700; font-size: 14px; line-height: 1; }
 .pc-btn:hover { background: rgba(150, 190, 180, 0.22); }
 .pc-btn:disabled { opacity: .3; cursor: default; background: none; }
@@ -404,7 +412,10 @@ body.one-mode .chips { display: none; }
 
 /* Task lists */
 .tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
-.task { display: flex; gap: 12px; align-items: flex-start; padding: 11px 4px; border-radius: 12px; }
+/* Every row: a fixed 32px lead slot (checkbox / counter / icon), so all titles start on the same line. */
+.task { display: grid; grid-template-columns: 32px minmax(0, 1fr); grid-auto-flow: column; grid-auto-columns: auto; column-gap: 10px; align-items: start; padding: 11px 4px; border-radius: 12px; }
+.task > :first-child { justify-self: center; }
+.task.compact { align-items: center; }
 .task + .task { border-top: 1px solid var(--stroke); }
 .check {
   appearance: none; -webkit-appearance: none; flex: none; cursor: pointer; margin: 2px 0 0;
@@ -419,7 +430,7 @@ body.one-mode .chips { display: none; }
 .task.done .task-title { color: var(--faint); text-decoration: line-through; font-weight: 500; }
 .task.skipped .task-title { text-decoration: none; font-style: italic; }
 .task .task-title { font-weight: 500; }
-.focus-card .task.hi:not(.done) .task-title::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--pink); margin: 0 8px 2px 0; vertical-align: middle; } /* high priority: a small marker, only in Today's focus */
+ /* high priority: a small marker, only in Today's focus */
 .task.lo:not(.done) .task-title { color: var(--muted); font-weight: 500; }
 .late-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--pink); flex: none; }
 @media (hover: hover) {

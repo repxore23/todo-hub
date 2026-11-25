@@ -86,7 +86,12 @@
     <!-- Dashboard -->
     <section class="view" id="view-dashboard">
       <!-- 1. Look here first: today's focus. 2. Glance: week + workload. 3. Reference: what's coming. -->
+      <article class="card quiet week-card">
+        <header class="card-head"><h2>This week</h2><span class="sub" id="week-sub" hidden></span></header>
+        <div class="week" id="week-strip"></div>
+      </article>
       <div class="hero-grid">
+        <div class="stack" id="hero-left">
         <article class="card focus-card">
           <header class="card-head"><h2>Today’s focus</h2><span class="sub" id="focus-sub" hidden></span></header>
           <div class="zone" id="zone-due" hidden>
@@ -104,18 +109,15 @@
           <p class="empty" id="focus-empty" hidden>Nothing on for today.</p>
           <p class="next-line" id="upnext" hidden></p>
         </article>
-        <div class="stack">
-          <article class="card quiet">
-            <header class="card-head"><h2>This week</h2><span class="sub" id="week-sub" hidden></span></header>
-            <div class="week" id="week-strip"></div>
+          <article class="card quiet" id="workload-card">
+            <header class="card-head"><h2>Workload</h2><span class="sub" id="course-sub" hidden></span></header>
+            <div id="course-bars" class="bars"></div>
           </article>
+        </div>
+        <div class="stack" id="hero-right">
           <article class="card quiet" id="labs-card" hidden>
             <header class="card-head"><h2>Labs &amp; tutorials</h2></header>
             <div class="labs" id="labs-list"></div>
-          </article>
-          <article class="card quiet">
-            <header class="card-head"><h2>Workload</h2><span class="sub" id="course-sub" hidden></span></header>
-            <div id="course-bars" class="bars"></div>
           </article>
         </div>
       </div>
