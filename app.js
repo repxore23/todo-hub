@@ -28,14 +28,17 @@
     if (due === t) return 'Today';
     if (due === addDays(t, 1)) return 'Tomorrow';
     if (due === addDays(t, -1)) return 'Yesterday';
+    // One format everywhere: "Thu 26" within a week either way, otherwise "Dec 2".
     const d = parse(due);
-    const o = { weekday: 'short', month: 'short', day: 'numeric' };
+    const diff = Math.round((d - parse(t)) / 864e5);
+    if (Math.abs(diff) <= 6) return `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${d.getDate()}`;
+    const o = { month: 'short', day: 'numeric' };
     if (d.getFullYear() !== new Date().getFullYear()) o.year = 'numeric';
     return d.toLocaleDateString(undefined, o);
   }
 
   // ---------- state ----------
-  const APP_VERSION = 'hub-v18';
+  const APP_VERSION = 'hub-v19';
   const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [] });
   const FB_TYPES = ['look', 'feature', 'issue', 'idea'];
   function normalizeFeedback(f) {
@@ -677,7 +680,7 @@ Turn the message into changes to the list.
       $('focus-empty').hidden = dueZone.length + workZone.length + heads.length > 0;
       const mustMin = dueZone.reduce((a, x) => a + estMinutes(x), 0);
       const workMin = workZone.reduce((a, x) => a + estMinutes(x), 0);
-      $('focus-sub').textContent = [mustMin ? `~${fmtMin(mustMin)} due` : '', workMin ? `~${fmtMin(workMin)} in progress` : ''].filter(Boolean).join(' · ');
+      $('focus-sub').textContent = [mustMin ? `${fmtMin(mustMin)} due` : '', workMin ? `${fmtMin(workMin)} in progress` : ''].filter(Boolean).join(' · ');
       // Coming soon: high-priority deadlines 2–3 days out, as a preview for spare time.
       const upNext = open.filter((x) => !zoneIds.has(x.id) && !isNotice(x) && x.due && x.due > tomorrow
           && x.due <= addDays(t, 3) && (x.priority === 'high' || x.due === addDays(t, 2)))
@@ -745,7 +748,7 @@ Turn the message into changes to the list.
     const bits = [];
     if (overdue) bits.push(['late', `${overdue} overdue`]);
     bits.push(['', today ? `${today} due today` : 'nothing due today']);
-    bits.push(['', `~${fmtMin(weekMin)} of work this week`]);
+    bits.push(['', `${fmtMin(weekMin)} of work this week`]);
     if (done) bits.push(['good', `${done} done this week`]);
     bits.forEach(([cls, text]) => box.append(el('span', 'pill ' + cls, text)));
   }
@@ -873,7 +876,7 @@ Turn the message into changes to the list.
     Object.keys(byCourse).sort().forEach((c) => {
       const sec = el('section', 'sec');
       const lab = el('div', 'course-label'); const s = el('i', 'swatch'); s.style.background = colors[c] || 'var(--muted)';
-      lab.append(s, c, el('span', 'n', String(byCourse[c].length)));
+      lab.append(s, c);
       const ul = el('ul', 'tasks compact');
       byCourse[c].forEach((x) => ul.append(row(x, colors, true)));
       sec.append(lab, ul);
@@ -912,7 +915,7 @@ Turn the message into changes to the list.
       const name = el('div', 'name'); const sw = el('i', 'swatch'); sw.style.background = colors[r.c];
       name.append(sw, el('span', null, r.c));
       if (r.late) name.append(el('i', 'late-dot'));
-      const count = el('div', 'count' + (r.weekMin ? ' strong' : ''), r.weekMin ? `~${fmtMin(r.weekMin)}` : '–');
+      const count = el('div', 'count' + (r.weekMin ? ' strong' : ''), r.weekMin ? `${fmtMin(r.weekMin)}` : '–');
       const track = el('div', 'track');
       if (r.weekMin) { const f = el('div', 'fill hi'); f.style.width = (r.weekMin / mx) * 100 + '%'; f.style.background = colors[r.c]; track.append(f); }
       if (r.laterMin) { const f = el('div', 'fill rest'); f.style.width = (r.laterMin / mx) * 100 + '%'; f.style.background = colors[r.c]; track.append(f); }
@@ -920,8 +923,8 @@ Turn the message into changes to the list.
       if (r.late) bits.push(`${r.late} overdue`);
       if (r.hi) bits.push(`${r.hi} high`);
       if (r.next) bits.push(`next: ${r.next.due === t ? 'today' : parse(r.next.due).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })}`);
-      if (r.laterMin) bits.push(`~${fmtMin(r.laterMin)} later`);
-      b.title = `${r.c}: ~${fmtMin(r.weekMin)} this week${bits.length ? ' · ' + bits.join(' · ') : ''}\n(Estimates; set exact times by editing a task. Click to filter.)`;
+      if (r.laterMin) bits.push(`${fmtMin(r.laterMin)} later`);
+      b.title = `${r.c}: ${fmtMin(r.weekMin)} this week${bits.length ? ' · ' + bits.join(' · ') : ''}\n(Estimates; set exact times by editing a task. Click to filter.)`;
       b.append(name, count, track);
       b.onclick = () => { filterCat = filterCat === r.c ? 'all' : r.c; render(); };
       box.append(b);
@@ -951,7 +954,7 @@ Turn the message into changes to the list.
         body.append(el('div', 'qw-title', x.title));
         const meta = el('div', 'qw-meta');
         const s = el('i', 'swatch'); s.style.background = colors[x.category] || 'var(--muted)';
-        meta.append(s, `${parse(x.due).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ~${fmtMin(estMinutes(x))}`);
+        meta.append(s, `${parse(x.due).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${fmtMin(estMinutes(x))}`);
         body.append(meta);
         const pin = el('button', 'pin', '☆'); pin.type = 'button';
         pin.title = 'Work on this today'; pin.setAttribute('aria-label', 'Work on this today: ' + x.title);
@@ -978,9 +981,10 @@ Turn the message into changes to the list.
     const box = $('task-groups'); box.textContent = '';
     const wk = addDays(t, 7);
     const groups = [
-      ['overdue', 'Overdue', open.filter((x) => x.due && x.due < t).sort(byDue)],
-      ['today', 'Today', open.filter((x) => x.due === t).sort(byPriority)],
-      ['week', 'This week', open.filter((x) => x.due && x.due > t && x.due <= wk).sort(byDue)],
+      // Only real missed deadlines are "Overdue"; aims whose day has come or passed are just "Today".
+      ['overdue', 'Overdue', open.filter(hardLate).sort(byDue)],
+      ['today', 'Today', open.filter((x) => x.due && !hardLate(x) && x.due <= t).sort(byPriority)],
+      ['g-week', 'This week', open.filter((x) => x.due && x.due > t && x.due <= wk).sort(byDue)],
       ['later', 'Later', open.filter((x) => x.due && x.due > wk).sort(byDue)],
       ['someday', 'No date', open.filter((x) => !x.due).sort(byPriority)],
     ];
@@ -1075,7 +1079,7 @@ Turn the message into changes to the list.
         const t = todayStr();
         const aim = isAim(x) && kind !== 'reminder';
         const short = compact && x.due > addDays(t, 1);
-        let label = short ? parse(x.due).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' }) : dueLabel(x.due);
+        let label = short ? dueLabel(x.due) : dueLabel(x.due);
         let cls = 'due';
         if (kind === 'shift') {
           label = x.off ? `day off · ${label}` : label;
@@ -1086,7 +1090,7 @@ Turn the message into changes to the list.
           cls += ' aim';
           // An aim that's today or already past just means "work on it today": no "passed", no nagging.
           label = x.done ? label : x.due <= t ? 'aim for today'
-            : `aim for ${x.due === addDays(t, 1) ? 'tomorrow' : parse(x.due).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })}`;
+            : `aim for ${x.due === addDays(t, 1) ? 'tomorrow' : dueLabel(x.due)}`;
         } else if (!x.done) {
           if (x.due < t) { cls += ' late'; label = `overdue · ${label}`; }
           else if (x.due === t) { cls += ' today'; label = 'due today'; }
@@ -1109,7 +1113,7 @@ Turn the message into changes to the list.
       if (x.skipped) meta.append(el('span', 'pri low', 'Skipped'));
       if (x.category && !compact) { const c = el('span', 'cat'); const s = el('i', 'swatch'); s.style.background = colors[x.category]; c.append(s, x.category); meta.append(c); }
       // Priority is shown by a pink dot before the title (high) or dimmer text (low), not pills.
-      if (kind === 'progress' && !x.done && !compact) meta.append(el('span', 'est', pacing(x) || `~${fmtMin(estMinutes(x))} left`));
+      if (kind === 'progress' && !x.done && !compact) meta.append(el('span', 'est', pacing(x) || `${fmtMin(estMinutes(x))} left`));
       if (meta.childNodes.length) body.append(meta);
       if (kind === 'progress' && !x.done && total) {
         const bar = el('div', 'prog-bar'); const fill = el('i');
@@ -1291,7 +1295,7 @@ Turn the message into changes to the list.
     [['', `Type: auto (${kindNames[kindOf(auto)]})`], ...Object.entries(kindNames)].forEach(([v, l]) => { const o = el('option', null, l); o.value = v; ki.append(o); });
     ki.value = x.kind;
     const es = el('select'); es.id = 'edit-est'; es.setAttribute('aria-label', 'Time needed');
-    [[0, `Time: auto (~${fmtMin(estMinutes(auto))})`], ...[15, 30, 45, 60, 90, 120, 180, 240, 300, 480, 600].map((m) => [m, `Time: ${fmtMin(m)}`])]
+    [[0, `Time: auto (${fmtMin(estMinutes(auto))})`], ...[15, 30, 45, 60, 90, 120, 180, 240, 300, 480, 600].map((m) => [m, `Time: ${fmtMin(m)}`])]
       .forEach(([v, l]) => { const o = el('option', null, l); o.value = String(v); es.append(o); });
     es.value = String(x.est || 0);
     const to = el('input'); to.type = 'number'; to.min = '0'; to.id = 'edit-total'; to.value = x.total || '';
@@ -1453,7 +1457,7 @@ Turn the message into changes to the list.
     if (p.due) bits.push(`${p.dateKind === 'aim' ? 'aim for' : 'due'} ${dueLabel(p.due)}`);
     if (p.category) bits.push(p.category);
     if (p.priority !== 'med') bits.push(p.priority === 'high' ? 'high priority' : 'low priority');
-    if (p.est) bits.push(`~${fmtMin(p.est)}`);
+    if (p.est) bits.push(`${fmtMin(p.est)}`);
     if (p.repeat) bits.push('repeats weekly');
     box.append(el('span', 'qp-title', `“${p.title}”`));
     bits.forEach((b) => box.append(el('span', 'qp-chip', b)));
