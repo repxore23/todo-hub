@@ -253,6 +253,7 @@ body.one-mode .chips { display: none; }
 
 /* Tests & exams timeline */
 .exams-card { padding-bottom: 22px; }
+.exams-card.in-col .tl-label { max-width: 170px; }
 .timeline { position: relative; height: 128px; margin: 6px 12px 0; }
 .tl-line { position: absolute; left: 0; right: 0; top: 64px; height: 2px; border-radius: 1px; background: linear-gradient(90deg, var(--violet-2), rgba(220, 232, 205, 0.15)); }
 .tl-today { position: absolute; left: 0; top: 72px; font-size: 11.5px; font-weight: 600; color: var(--violet-2); }

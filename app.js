@@ -38,7 +38,7 @@
   }
 
   // ---------- state ----------
-  const APP_VERSION = 'hub-v22';
+  const APP_VERSION = 'hub-v23';
   const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [] });
   const FB_TYPES = ['look', 'feature', 'issue', 'idea'];
   function normalizeFeedback(f) {
@@ -1523,14 +1523,38 @@ Turn the message into changes to the list.
   const isExam = (x) => /\b(final exam|exam|term test|midterm|final)\b/i.test(x.title) && !/viewing|conflict|feedback|review/i.test(x.title);
   // The two top columns change height with what's due. Put Workload under whichever is shorter,
   // so there's never a big empty gap beside one of them. (One column on narrow screens: keep it last.)
+  // Tests & exams joins in too; on one-column screens it goes back to its full-width spot.
   function balanceHero() {
-    const L = $('hero-left'), R = $('hero-right'), w = $('workload-card');
-    if (!L || !R || !w) return;
-    if (window.matchMedia('(max-width: 1100px)').matches) { if (w.parentNode !== R) R.append(w); return; }
-    L.append(w);
-    const left = L.offsetHeight - w.offsetHeight;
+    const L = $('hero-left'), R = $('hero-right'), w = $('workload-card'), ex = $('exams-card'), home = $('exams-home');
+    if (!L || !R || !w || !ex || !home) return;
+    if (window.matchMedia('(max-width: 1100px)').matches) {
+      R.append(w);
+      home.parentNode.insertBefore(ex, home);
+      ex.classList.remove('in-col');
+      return;
+    }
+    const GAP = 20;
+    const cards = [w];
+    if (!ex.hidden) { cards.push(ex); ex.classList.add('in-col'); }
+    cards.forEach((c) => L.append(c)); // measure everything at column width first
+    const sizes = new Map(cards.map((c) => [c, c.offsetHeight]));
+    const left = L.offsetHeight - cards.reduce((s, c) => s + sizes.get(c) + GAP, 0);
     const right = R.offsetHeight;
-    if (right < left) R.append(w);
+    // Try every arrangement (Workload left/right; Tests & exams left/right/full width below) and keep the most even one.
+    // Ties go to Tests & exams staying full width.
+    let best = null;
+    for (const wSide of ['L', 'R']) {
+      for (const eSide of ex.hidden ? ['home'] : ['home', 'L', 'R']) {
+        let l = left, r = right;
+        const add = (side, c) => { if (side === 'L') l += sizes.get(c) + GAP; else if (side === 'R') r += sizes.get(c) + GAP; };
+        add(wSide, w); if (eSide !== 'home') add(eSide, ex);
+        const score = Math.abs(l - r) + (eSide === 'home' ? 0 : 1);
+        if (!best || score < best.score) best = { score, wSide, eSide };
+      }
+    }
+    (best.wSide === 'L' ? L : R).append(w);
+    if (best.eSide === 'home') { home.parentNode.insertBefore(ex, home); ex.classList.remove('in-col'); }
+    else (best.eSide === 'L' ? L : R).append(ex);
   }
   let balanceTimer = 0;
   window.addEventListener('resize', () => { clearTimeout(balanceTimer); balanceTimer = setTimeout(() => { if (view === 'dashboard') balanceHero(); }, 120); });
