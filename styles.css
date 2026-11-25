@@ -353,6 +353,7 @@ h2 { margin: 0; font-family: var(--font-display); font-size: 15px; font-weight: 
 .task-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .task-title { all: unset; cursor: text; font-weight: 600; overflow-wrap: anywhere; }
 .task.done .task-title { color: var(--faint); text-decoration: line-through; font-weight: 500; }
+.task.skipped .task-title { text-decoration: none; font-style: italic; }
 .task.hi:not(.done) .task-title::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--pink); margin: 0 8px 2px 0; vertical-align: middle; box-shadow: 0 0 8px rgba(214, 138, 108, 0.6); }
 .task.lo:not(.done) .task-title { color: var(--muted); font-weight: 500; }
 .late-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--pink); flex: none; }

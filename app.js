@@ -35,7 +35,7 @@
   }
 
   // ---------- state ----------
-  const APP_VERSION = 'hub-v14';
+  const APP_VERSION = 'hub-v15';
   const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [] });
   const FB_TYPES = ['look', 'feature', 'issue', 'idea'];
   function normalizeFeedback(f) {
@@ -78,6 +78,7 @@
       est: Math.max(0, Math.min(6000, Math.round(Number(t.est) || 0))), // minutes; 0 = guess from the title
       kind: ['task', 'reminder', 'progress', 'issue', 'shift'].includes(t.kind) ? t.kind : '', // '' = guess from the title
       off: Boolean(t.off), // shifts: not working that day (requested off, cancelled)
+      skipped: Boolean(t.done && t.skipped), // cleared without doing it: not counted as "done"
       repeat: t.repeat === 'weekly' ? 'weekly' : '', // recurring: next one appears when this one is done / its day passes
       nextMade: Boolean(t.nextMade),
       note: String(t.note || '').slice(0, 1000), // e.g. how an issue was resolved; Claude reads it
@@ -225,7 +226,11 @@
       const t = findTask(c.task || c.id || c.title, work);
       if (!t) { skipped.push(`couldn't find “${c.task || c.title || '?'}”`); continue; }
       let op = null;
-      if (action === 'resolve') {
+      if (action === 'skip') {
+        const f = { done: true, skipped: true, doneAt: Date.now(), focus: false };
+        if (c.note) f.note = String(c.note).slice(0, 1000);
+        op = { type: 'patch', id: t.id, fields: f }; did.push(`skipped “${t.title}”`);
+      } else if (action === 'resolve') {
         const f = { done: true, doneAt: Date.now(), focus: false };
         if (c.note) f.note = String(c.note).slice(0, 1000);
         op = { type: 'patch', id: t.id, fields: f }; did.push(`resolved “${t.title}”`);
@@ -234,7 +239,7 @@
         if (c.note) f.note = String(c.note).slice(0, 1000);
         op = { type: 'patch', id: t.id, fields: f }; did.push(`finished “${t.title}”`);
       } else if (action === 'reopen' || action === 'undone') {
-        op = { type: 'patch', id: t.id, fields: { done: false, doneAt: null } }; did.push(`reopened “${t.title}”`);
+        op = { type: 'patch', id: t.id, fields: { done: false, doneAt: null, skipped: false } }; did.push(`reopened “${t.title}”`);
       } else if (action === 'delete' || action === 'remove') {
         op = { type: 'delete', id: t.id }; did.push(`removed “${t.title}”`);
       } else if (action === 'update' || action === 'edit') {
@@ -341,7 +346,7 @@
   const ABOUT_FOR_CLAUDE = [
     'This is the To-Do Hub task list (app: https://repxore23.github.io/todo-hub/). It is the single source of truth for the user\'s to-dos and deadlines; it replaces the old "To-do & deadlines" doc.',
     'You cannot edit this file. To change the list, create a NEW Google Drive file titled todo-hub-inbox-YYYYMMDD-HHMM.json (contentMimeType text/plain, disableConversionToGoogleType true) containing {"changes":[...]}. The app applies it next time it opens, then deletes it.',
-    'Change actions: {"action":"add","title":...,"due":"YYYY-MM-DD","category":...,"priority":"high|med|low","dateKind":"due|aim","repeat":"weekly","est":minutes} · {"action":"complete","task":"<exact title>","note":...} · {"action":"update","task":"<exact title>", only changed fields; "due":"none" clears; "focus":"yes|no"; "progress":N; "off":true for a shift day off; "note":...} · {"action":"resolve","task":...,"note":...} for missed/missing items · {"action":"reopen"|"delete","task":...} · {"action":"feedback","type":"look|feature|issue|idea","text":...} for comments about the app itself.',
+    'Change actions: {"action":"add","title":...,"due":"YYYY-MM-DD","category":...,"priority":"high|med|low","dateKind":"due|aim","repeat":"weekly","est":minutes} · {"action":"complete","task":"<exact title>","note":...} · {"action":"skip","task":...,"note":...} when the user won\'t do it (not counted as done) · {"action":"update","task":"<exact title>", only changed fields; "due":"none" clears; "focus":"yes|no"; "progress":N; "off":true for a shift day off; "note":...} · {"action":"resolve","task":...,"note":...} for missed/missing items · {"action":"reopen"|"delete","task":...} · {"action":"feedback","type":"look|feature|issue|idea","text":...} for comments about the app itself.',
     'Meanings: "due" = real deadline (overdue when missed); "aim" = the user\'s own target (never overdue). Reminders ("info only", "last day") and work shifts are events, never complete them. Progress tasks (lecture batches) use "progress", not complete. Read each task\'s "note" for context the user wrote. Only count real deadlines as overdue.',
   ].join(' ');
   async function writeFile(id, d) {
@@ -464,7 +469,7 @@
         items: {
           type: 'object',
           properties: {
-            action: { type: 'string', enum: ['add', 'complete', 'resolve', 'reopen', 'update', 'delete', 'feedback'] },
+            action: { type: 'string', enum: ['add', 'complete', 'skip', 'resolve', 'reopen', 'update', 'delete', 'feedback'] },
             task: { type: 'string' },
             title: { type: 'string' },
             due: { type: 'string' },
@@ -507,7 +512,7 @@ Turn the message into changes to the list.
 - "task": the id of the existing task the change is about ("" for add).
 - For add: "title" is required; "due" is YYYY-MM-DD or ""; "category" reuses an existing one when it fits, else a short name or ""; "priority" defaults to "med".
 - For update: fill only the fields that change and leave the rest "". Use "due": "none" to remove a date.
-- Prefer "complete" when the user finished something; use "delete" only when they cancel or remove it.
+- Prefer "complete" when the user finished something; use "skip" when they're not going to do it (it's cleared but not counted as done); use "delete" only for mistakes or duplicates.
 - Resolve relative dates ("tomorrow", "Friday" = the next Friday after today) against today.
 - Kinds: "reminder" tasks are notices (they expire on their own; never complete them). "progress" tasks have parts (e.g. 9 lecture recordings): set "progress" to the number of parts done so far, e.g. "3" (it completes itself at the total); otherwise leave "progress" "". "issue" tasks are missed or missing things: use action "resolve" with a short "note" saying what happened, instead of "complete".
 - If the user says anything about the To-Do Hub app itself (how it looks, how it works, a problem, an idea for it), log it with action "feedback": "title" = the feedback in one clear sentence, "category" = "look", "feature", "issue" or "idea", other fields "".
@@ -717,7 +722,7 @@ Turn the message into changes to the list.
     const today = work.filter((x) => x.due === t).length;
     const weekMin = work.filter((x) => x.focus || (x.due && x.due <= addDays(t, 7))).reduce((a, x) => a + estMinutes(x), 0);
     const weekAgo = Date.now() - 7 * 864e5;
-    const done = data.tasks.filter((x) => x.done && x.doneAt >= weekAgo && (filterCat === 'all' || x.category === filterCat)).length;
+    const done = data.tasks.filter((x) => x.done && !x.skipped && x.doneAt >= weekAgo && (filterCat === 'all' || x.category === filterCat)).length;
     const bits = [];
     if (overdue) bits.push(['late', `${overdue} overdue`]);
     bits.push(['', today ? `${today} due today` : 'nothing due today']);
@@ -920,7 +925,7 @@ Turn the message into changes to the list.
         const li = el('li', 'qw');
         const cb = el('input', 'check'); cb.type = 'checkbox';
         cb.setAttribute('aria-label', 'Mark done: ' + x.title);
-        cb.onchange = () => commit([{ type: 'patch', id: x.id, fields: { done: true, doneAt: Date.now() } }]);
+        cb.onchange = () => { commit([{ type: 'patch', id: x.id, fields: { done: true, doneAt: Date.now() } }]); doneToast(x); };
         const body = el('div', 'qw-body');
         body.append(el('div', 'qw-title', x.title));
         const meta = el('div', 'qw-meta');
@@ -992,7 +997,7 @@ Turn the message into changes to the list.
   function row(x, colors, compact) {
     const kind = kindOf(x);
     const total = totalOf(x);
-    const li = el('li', 'task' + (x.done ? ' done' : '') + (compact ? ' compact' : '') + (kind === 'reminder' ? ' reminder' : '')
+    const li = el('li', 'task' + (x.done ? ' done' : '') + (x.skipped ? ' skipped' : '') + (compact ? ' compact' : '') + (kind === 'reminder' ? ' reminder' : '')
       + (kind === 'shift' ? ' shift' + (x.off ? ' off' : '') : '')
       + (x.priority === 'high' ? ' hi' : x.priority === 'low' ? ' lo' : '') + (x.focus ? ' pinned' : ''));
     let cb;
@@ -1032,9 +1037,9 @@ Turn the message into changes to the list.
       cb.type = 'checkbox'; cb.checked = x.done;
       cb.setAttribute('aria-label', (x.done ? 'Mark not done: ' : 'Mark done: ') + x.title);
       cb.onchange = () => {
-        if (x.done) { commit([{ type: 'patch', id: x.id, fields: { done: false, doneAt: null } }]); return; }
+        if (x.done) { commit([{ type: 'patch', id: x.id, fields: { done: false, doneAt: null, skipped: false } }]); return; }
         commit([{ type: 'patch', id: x.id, fields: { done: true, doneAt: Date.now() } }]);
-        toast(`Done: “${x.title}”`, 5000, [{ type: 'patch', id: x.id, fields: { done: false, doneAt: null } }]);
+        doneToast(x);
       };
     }
     const body = el('div', 'task-body');
@@ -1080,6 +1085,7 @@ Turn the message into changes to the list.
         chip.onclick = (e) => { e.stopPropagation(); openDateMenu(x, chip); };
         meta.append(chip);
       }
+      if (x.skipped) meta.append(el('span', 'pri low', 'Skipped'));
       if (x.category && !compact) { const c = el('span', 'cat'); const s = el('i', 'swatch'); s.style.background = colors[x.category]; c.append(s, x.category); meta.append(c); }
       // Priority is shown by a pink dot before the title (high) or dimmer text (low), not pills.
       if (kind === 'progress' && !x.done && !compact) meta.append(el('span', 'est', pacing(x) || `~${fmtMin(estMinutes(x))} left`));
@@ -1171,7 +1177,7 @@ Turn the message into changes to the list.
         if (!isDate(dateIn.value)) { dateIn.focus(); return; }
         fields = { due: dateIn.value, dateKind: 'due', note: join(`Extension to ${parse(dateIn.value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`) };
       } else if (pick === 'late') fields = { done: true, doneAt: Date.now(), focus: false, note: join('Submitted late') };
-      else if (pick === 'skip') fields = { done: true, doneAt: Date.now(), focus: false, note: join('Skipped') };
+      else if (pick === 'skip') fields = { done: true, skipped: true, doneAt: Date.now(), focus: false, note: join('Skipped') };
       else {
         if (!extra) { ta.focus(); return; }
         fields = { kind: 'issue', note: extra }; // stays open as an issue to resolve, with the explanation attached
@@ -1203,6 +1209,14 @@ Turn the message into changes to the list.
     pick.onchange = () => { if (isDate(pick.value)) set({ due: pick.value }); };
     menu.append(pick);
     if (x.due) { const nd = el('button', null, 'No date'); nd.type = 'button'; nd.onclick = () => set({ due: null }); menu.append(nd); }
+    const skip = el('button', null, 'Not doing it (skip)'); skip.type = 'button';
+    skip.title = 'Clears it without counting it as done';
+    skip.onclick = () => {
+      closeDateMenu(); track('skip');
+      commit([{ type: 'patch', id: x.id, fields: { done: true, skipped: true, doneAt: Date.now(), focus: false } }]);
+      toast(`Skipped “${x.title}”`, 5000, [{ type: 'patch', id: x.id, fields: { done: false, skipped: false, doneAt: null } }]);
+    };
+    menu.append(skip);
     const aim = isAim(x);
     const sw = el('button', 'switch', aim ? 'Make it a real deadline' : 'Just my own target');
     sw.type = 'button'; sw.title = aim ? 'Turns red if missed' : 'Never turns red';
@@ -1315,14 +1329,22 @@ Turn the message into changes to the list.
   // ---------- toast / banner ----------
   let toastTimer = null;
   // A short message at the bottom; pass undoOps to show an Undo button that applies them.
-  function toast(msg, ms = 4000, undoOps) {
-    const t = $('toast'); t.textContent = msg; t.hidden = false;
-    if (undoOps && undoOps.length) {
-      const u = el('button', 'toast-undo', 'Undo'); u.type = 'button';
-      u.onclick = () => { track('undo'); commit(undoOps); t.hidden = true; };
+  // extra: more buttons, [{label, ops, track}].
+  function toast(msg, ms = 4000, undoOps, extra = []) {
+    const t = $('toast'); t.textContent = ''; t.append(el('span', null, msg)); t.hidden = false;
+    const btn = (label, ops, key) => {
+      const u = el('button', 'toast-undo', label); u.type = 'button';
+      u.onclick = () => { track(key); commit(ops); t.hidden = true; };
       t.append(u);
-    }
+    };
+    if (undoOps && undoOps.length) btn('Undo', undoOps, 'undo');
+    extra.forEach((e) => btn(e.label, e.ops, e.track || 'toast.extra'));
     clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, ms);
+  }
+  // Tick-off confirmation, with a one-tap switch to "not doing it" (cleared, but not counted as done).
+  function doneToast(x) {
+    toast(`Done: “${x.title}”`, 6000, [{ type: 'patch', id: x.id, fields: { done: false, doneAt: null, skipped: false } }],
+      [{ label: 'Not doing it', ops: [{ type: 'patch', id: x.id, fields: { skipped: true } }], track: 'skip' }]);
   }
   function showBanner(msg) { const b = $('banner'); b.textContent = msg; b.hidden = false; }
 
@@ -1501,7 +1523,7 @@ Turn the message into changes to the list.
     const manual = data.tasks.filter((x) => x.est > 0).length;
     lines.push('## List snapshot');
     lines.push(`- Open: ${open.length} (${Object.entries(kinds).map(([k, v]) => `${v} ${k}`).join(', ')}) · overdue ${open.filter((x) => x.due && x.due < t && kindOf(x) !== 'reminder').length} · pinned ${open.filter((x) => x.focus).length}`);
-    lines.push(`- Done total: ${data.tasks.filter((x) => x.done).length} · tasks with a time set by hand: ${manual}`);
+    lines.push(`- Done total: ${data.tasks.filter((x) => x.done && !x.skipped).length} · skipped: ${data.tasks.filter((x) => x.skipped).length} · tasks with a time set by hand: ${manual}`);
     lines.push(`- Categories: ${categories().join(', ')}`);
     return lines.join('\n');
   }
