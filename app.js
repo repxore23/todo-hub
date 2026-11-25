@@ -1,4 +1,4 @@
-﻿/* To-Do Hub — app logic.
+/* To-Do Hub — app logic.
    Data lives in one JSON file in Google Drive ("todo-hub-tasks.json").
    Claude chat can request changes by creating "todo-hub-inbox-*.json" notes in Drive;
    the app applies them on sync and moves the notes to the trash. */
@@ -35,7 +35,7 @@
   }
 
   // ---------- state ----------
-  const APP_VERSION = 'hub-v15';
+  const APP_VERSION = 'hub-v16';
   const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [] });
   const FB_TYPES = ['look', 'feature', 'issue', 'idea'];
   function normalizeFeedback(f) {
@@ -386,7 +386,7 @@
   async function sync() {
     if (!DRIVE_MODE) return;
     if (!tokenValid()) {
-      setSync('warn', pending.length ? `Tap to sync ${pending.length} change${pending.length > 1 ? 's' : ''}` : 'Tap to connect Drive');
+      setSync('warn', pending.length ? `Sync ${pending.length} change${pending.length > 1 ? 's' : ''}` : 'Connect');
       return;
     }
     if (syncing) { syncAgain = true; return syncing; }
@@ -428,15 +428,15 @@
         pending.forEach((op) => applyOpData(data, op));
         saveLocal();
         LS.set('hub.lastSync', Date.now());
-        setSync('ok', 'Synced just now');
+        setSync('ok', 'Synced');
         render();
         if (from.length) toast('From Claude chat: ' + from.join(' · '), 7000);
       } catch (e) {
-        if (e && e.code === 'auth') setSync('warn', 'Tap to reconnect Drive');
+        if (e && e.code === 'auth') setSync('warn', 'Reconnect');
         else if (e && e.code === 'corrupt') { trackProblem('Task file in Drive was unreadable'); setSync('err', 'Task file is unreadable'); showBanner('Your task file in Google Drive couldn’t be read, so nothing was overwritten. Restore an older version of “todo-hub-tasks.json” in Drive (right-click → Manage versions).'); }
         else {
           if (navigator.onLine) trackProblem(`Sync failed${e && e.status ? ` (HTTP ${e.status})` : ''}`);
-          setSync('err', navigator.onLine ? 'Sync failed — tap to retry' : 'Offline — changes are kept on this device');
+          setSync('err', navigator.onLine ? 'Retry sync' : 'Offline');
         }
       } finally {
         syncing = null;
@@ -456,7 +456,7 @@
     if (!DRIVE_MODE || !$('sync-btn').classList.contains('ok')) return;
     const t = LS.get('hub.lastSync', 0);
     const m = Math.round((Date.now() - t) / 60000);
-    $('sync-text').textContent = m < 1 ? 'Synced just now' : `Synced ${m} min ago`;
+    $('sync-text').textContent = m < 1 ? 'Synced' : `Synced ${m}m ago`;
   }
 
   // ---------- Claude box ----------
@@ -563,13 +563,12 @@ Turn the message into changes to the list.
     if (!navigator.onLine) return 'You’re offline. The Claude box needs internet.';
     return 'Something went wrong talking to Claude. Try again.' + (m ? ` (${m})` : '');
   }
-  async function runAsk(ev) {
-    ev.preventDefault();
-    const input = $('ask-input');
+  async function runAsk() {
+    const input = $('bar-input');
     const msg = input.value.trim();
     if (!msg) return;
-    if (!LS.get('hub.apiKey', '')) { openSettings(); toast('Add your Anthropic API key here to turn on the Claude box.'); return; }
-    const go = $('ask-go');
+    if (!LS.get('hub.apiKey', '')) { openSettings(); toast('Add your Anthropic API key here to use Ask Claude.'); return; }
+    const go = $('bar-go');
     go.disabled = true; go.textContent = 'Thinking…';
     try {
       const out = await callClaude(msg);
@@ -581,14 +580,24 @@ Turn the message into changes to the list.
       let reply = String(out.reply || '').trim() || (res.ops.length ? 'Updated.' : 'No changes.');
       if (res.skipped.length) reply += `\n(Skipped: ${res.skipped.join('; ')})`;
       showReply(reply, Boolean(lastUndo));
-      if (res.ops.length) input.value = '';
+      input.value = '';
     } catch (e) {
       track('box.error');
       trackProblem('Claude box: ' + claudeError(e));
       showReply(claudeError(e), false);
     } finally {
-      go.disabled = false; go.textContent = 'Update';
+      go.disabled = false; setBarMode(barMode);
     }
+  }
+  // One bar for both: "Add" reads the line as a task (instant, free); "Ask Claude" sends it to Claude.
+  let barMode = LS.get('hub.barMode', 'add') === 'ask' ? 'ask' : 'add';
+  function setBarMode(m) {
+    barMode = m; LS.set('hub.barMode', m);
+    document.querySelectorAll('#bar .seg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === m)));
+    $('bar-input').placeholder = m === 'add' ? 'Add a task: lab report fri high BIOA01' : 'Tell Claude what changed, or ask about your list';
+    $('bar-input').setAttribute('aria-label', m === 'add' ? 'Add a task' : 'Ask Claude');
+    $('bar-go').textContent = m === 'add' ? 'Add' : 'Ask';
+    quickPreview(m === 'add' ? parseQuick($('bar-input').value) : { title: '' }, $('quick-preview'));
   }
   function showReply(text, undo) {
     $('ask-reply').textContent = text;
@@ -662,7 +671,7 @@ Turn the message into changes to the list.
       // Always show the deadline zone, so "nothing due" is a clear, reassuring answer.
       $('zone-due').hidden = false;
       $('due-head').hidden = !dueZone.length; // no red heading when there's nothing due
-      if (!dueZone.length) $('focus-due').append(el('li', 'empty all-clear', 'Nothing due today or tomorrow ✓'));
+      if (!dueZone.length) $('focus-due').append(el('li', 'empty all-clear', 'Nothing due today or tomorrow'));
       fillZone('zone-work', 'focus-work', workZone, colors);
       fillZone('zone-heads', 'focus-heads', heads, colors, true);
       $('focus-empty').hidden = dueZone.length + workZone.length + heads.length > 0;
@@ -673,9 +682,19 @@ Turn the message into changes to the list.
       const upNext = open.filter((x) => !zoneIds.has(x.id) && !isNotice(x) && x.due && x.due > tomorrow
           && x.due <= addDays(t, 3) && (x.priority === 'high' || x.due === addDays(t, 2)))
         .sort(byDue).slice(0, 5);
-      $('upnext').hidden = !upNext.length;
-      const ul = $('upnext-list'); ul.textContent = '';
-      upNext.forEach((x) => ul.append(row(x, colors, true)));
+      // One quiet line instead of a second list (the same tasks are in Courses below).
+      const nl = $('upnext'); nl.textContent = '';
+      nl.hidden = !upNext.length;
+      if (upNext.length) {
+        nl.append(el('span', 'next-label', 'Next'));
+        const byDay = {};
+        upNext.forEach((x) => { (byDay[x.due] = byDay[x.due] || []).push(x.title); });
+        Object.keys(byDay).sort().forEach((d) => {
+          const g = el('span', 'next-group');
+          g.append(el('b', null, parse(d).toLocaleDateString(undefined, { weekday: 'short' })), ' ' + byDay[d].join(', '));
+          nl.append(g);
+        });
+      }
       renderSections(open.filter((x) => !zoneIds.has(x.id) && x.due && x.due > t && x.due <= addDays(t, 7)).sort(byDue), colors);
     } else if (view === 'tasks') {
       renderGroups(open, t, colors);
@@ -811,6 +830,8 @@ Turn the message into changes to the list.
     const m = x.title.match(/\d{1,2}(:\d\d)?\s*(am|pm)?\s*[–-]\s*\d{1,2}(:\d\d)?\s*(am|pm)?/i);
     return 'Shift' + (m ? ' ' + m[0].replace(/\s+/g, ' ') : '');
   }
+  // Fits a week cell without truncating: "8:30 am–5 pm" → "8:30–5".
+  const shiftShort = (x) => shiftLabel(x).replace(/^Shift ?/, '').replace(/\s*(am|pm)\s*/gi, '').replace(/-/g, '–') || 'work';
   function renderWeek(open, t, colors) {
     const box = $('week-strip'); box.textContent = '';
     // One dot per task (course colour; ringed = high priority), amber strip = work shift. Hover a day for titles.
@@ -835,7 +856,7 @@ Turn the message into changes to the list.
       col.append(dots);
       if (shifts.length) {
         const s0 = shifts[0];
-        col.append(el('span', 'shift-strip' + (s0.off ? ' off' : ''), s0.off ? 'day off' : shiftLabel(s0).replace('Shift ', '')));
+        col.append(el('span', 'shift-strip' + (s0.off ? ' off' : ''), s0.off ? 'off' : shiftShort(s0)));
       }
       box.append(col);
     });
@@ -879,7 +900,7 @@ Turn the message into changes to the list.
       const next = open.filter((x) => x.due && x.due >= t).sort(byDue)[0];
       const late = open.filter(hardLate).length;
       return { c, weekMin, laterMin, hi: week.filter((x) => x.priority === 'high').length, next, late, n: open.length };
-    }).filter((r) => r.n).sort((a, b) => b.weekMin - a.weekMin || b.laterMin - a.laterMin);
+    }).filter((r) => r.weekMin > 0).sort((a, b) => b.weekMin - a.weekMin || b.laterMin - a.laterMin); // only courses with work this week
     const total = rows.reduce((a, r) => a + r.weekMin, 0);
     $('course-sub').textContent = rows.length ? `hours this week · faded = later` : '';
     if (!rows.length) { box.append(el('p', 'empty', 'No open tasks.')); return; }
@@ -1529,11 +1550,14 @@ Turn the message into changes to the list.
   }
 
   // ---------- wire up ----------
-  $('quick-input').addEventListener('input', (e) => quickPreview(parseQuick(e.target.value), $('quick-preview')));
-  $('quick-form').addEventListener('submit', (e) => {
+  $('bar-input').addEventListener('input', (e) => { if (barMode === 'add') quickPreview(parseQuick(e.target.value), $('quick-preview')); });
+  document.querySelectorAll('#bar .seg button').forEach((b) => { b.onclick = () => { setBarMode(b.dataset.mode); $('bar-input').focus(); }; });
+  $('bar').addEventListener('submit', (e) => {
     e.preventDefault();
-    if (quickAdd($('quick-input').value)) { $('quick-input').value = ''; $('quick-preview').textContent = ''; }
+    if (barMode === 'ask') { runAsk(); return; }
+    if (quickAdd($('bar-input').value)) { $('bar-input').value = ''; $('quick-preview').textContent = ''; }
   });
+  setBarMode(barMode);
   $('feedback-btn').onclick = openFeedback;
   $('feedback-open').onclick = openFeedback;
   $('fb-add').onclick = () => {
@@ -1563,7 +1587,6 @@ Turn the message into changes to the list.
     renderFeedbackList(); btn.hidden = true;
     toast('Feedback list cleared.');
   };
-  $('ask').addEventListener('submit', runAsk);
   $('ask-close').onclick = () => { $('ask-out').hidden = true; };
   $('undo-btn').onclick = () => {
     if (!lastUndo) return;
@@ -1595,7 +1618,7 @@ Turn the message into changes to the list.
   $('drive-disconnect').onclick = () => {
     try { if (token && window.google) google.accounts.oauth2.revoke(token.access_token, () => {}); } catch { /* ignore */ }
     token = null; LS.del('hub.gtoken'); LS.del('hub.gconsent'); LS.del('hub.fileId');
-    setSync('warn', 'Tap to connect Drive');
+    setSync('warn', 'Connect');
     $('settings').close();
   };
   $('api-save').onclick = () => {
@@ -1634,9 +1657,9 @@ Turn the message into changes to the list.
   setView();
   if (DRIVE_MODE) {
     if (tokenValid()) sync();
-    else setSync('warn', LS.get('hub.gconsent', false) ? 'Tap to reconnect Drive' : 'Tap to connect Drive');
+    else setSync('warn', LS.get('hub.gconsent', false) ? 'Reconnect' : 'Connect');
   } else {
-    setSync('warn', 'Saved on this device only');
+    setSync('warn', 'This device only');
   }
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {

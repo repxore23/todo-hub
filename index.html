@@ -31,9 +31,9 @@
       <a href="#tasks" data-view="tasks"><svg viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg>Tasks</a>
       <a href="#done" data-view="done"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM8 12l3 3 5-6"/></svg>Done</a>
     </nav>
-    <div class="side-label">Courses &amp; categories</div>
+    <div class="side-label">Courses</div>
     <ul class="cat-list" id="cat-list"></ul>
-    <div class="side-label" title="Short tasks with deadlines more than a week away. They move to Coming up once they're within a week.">Quick wins · get ahead</div>
+    <div class="side-label" title="Short tasks you can get ahead on. They move into your week as the deadline gets close.">Quick wins</div>
     <ul class="quick" id="quick-side"></ul>
     <div class="side-foot">
       <button class="sync" id="sync-btn" type="button"><span class="dot"></span><span id="sync-text">Starting…</span></button>
@@ -49,12 +49,16 @@
         <h1 id="date-label">Today</h1>
         <p class="summary" id="summary"></p>
       </div>
-      <form class="ask" id="ask" autocomplete="off">
-        <svg class="spark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l2.2 6.3L20 10l-5.8 1.7L12 18l-2.2-6.3L4 10l5.8-1.7z"/></svg>
-        <input id="ask-input" placeholder="Tell Claude what changed… “finished Lab 5, add dentist Friday”" aria-label="Tell Claude what changed">
-        <button class="btn grad" id="ask-go" type="submit">Update</button>
-      </form>
     </header>
+    <form class="bar" id="bar" autocomplete="off">
+      <div class="seg" aria-label="What this bar does">
+        <button type="button" data-mode="add" aria-pressed="true">Add</button>
+        <button type="button" data-mode="ask" aria-pressed="false">Ask Claude</button>
+      </div>
+      <input id="bar-input" aria-label="Add a task">
+      <button class="btn grad sm" id="bar-go" type="submit">Add</button>
+      <div class="qa-preview" id="quick-preview" aria-live="polite"></div>
+    </form>
     <div class="ask-out" id="ask-out" hidden>
       <p id="ask-reply"></p>
       <div class="ask-actions">
@@ -64,12 +68,6 @@
     </div>
     <div class="banner" id="banner" hidden></div>
 
-    <form class="quickadd" id="quick-form" autocomplete="off">
-      <span class="qa-plus" aria-hidden="true">+</span>
-      <input id="quick-input" placeholder="Add a task… try “lab report fri high BIOA01” or “stemble hw every mon 1h”" aria-label="Quick add a task">
-      <div class="qa-preview" id="quick-preview" aria-live="polite"></div>
-    </form>
-
     <div class="chips" id="chips" aria-label="Filter by category"></div>
 
     <!-- Dashboard -->
@@ -77,37 +75,34 @@
       <!-- 1. Look here first: today's focus. 2. Glance: week + workload. 3. Reference: what's coming. -->
       <div class="hero-grid">
         <article class="card focus-card">
-          <header class="card-head"><h2>Today’s focus</h2><span class="sub" id="focus-sub"></span></header>
+          <header class="card-head"><h2>Today’s focus</h2><span class="sub" id="focus-sub" hidden></span></header>
           <div class="zone" id="zone-due" hidden>
             <p class="zone-head must" id="due-head">Due today &amp; tomorrow</p>
             <ul class="tasks" id="focus-due"></ul>
           </div>
           <div class="zone" id="zone-work" hidden>
-            <p class="zone-head">Working on <span>no deadline pressure</span></p>
+            <p class="zone-head">Working on</p>
             <ul class="tasks" id="focus-work"></ul>
           </div>
           <div class="zone heads" id="zone-heads" hidden>
             <p class="zone-head">Heads-up</p>
             <ul class="tasks compact" id="focus-heads"></ul>
           </div>
-          <p class="empty" id="focus-empty" hidden>Nothing due and nothing in progress. Tap ☆ on any task to work on it today.</p>
-          <div class="upnext" id="upnext" hidden>
-            <p class="upnext-head">Coming soon <span>if you have time · ☆ pulls it into today</span></p>
-            <ul class="tasks compact" id="upnext-list"></ul>
-          </div>
+          <p class="empty" id="focus-empty" hidden>Nothing on for today.</p>
+          <p class="next-line" id="upnext" hidden></p>
         </article>
         <div class="stack">
           <article class="card quiet">
-            <header class="card-head"><h2>Week ahead</h2><span class="sub" id="week-sub"></span></header>
+            <header class="card-head"><h2>This week</h2><span class="sub" id="week-sub" hidden></span></header>
             <div class="week" id="week-strip"></div>
           </article>
           <article class="card quiet">
-            <header class="card-head"><h2>Workload</h2><span class="sub" id="course-sub"></span></header>
+            <header class="card-head"><h2>Workload</h2><span class="sub" id="course-sub" hidden></span></header>
             <div id="course-bars" class="bars"></div>
           </article>
         </div>
       </div>
-      <p class="zone-label">Coming up · next 7 days</p>
+      <p class="zone-label">Coming up</p>
       <div class="grid-2 even">
         <article class="card quiet">
           <header class="card-head"><h2>Courses</h2></header>
@@ -125,7 +120,7 @@
         </div>
       </div>
       <article class="card mobile-only">
-        <header class="card-head"><h2>Quick wins</h2><span class="sub">short tasks you can get ahead on</span></header>
+        <header class="card-head"><h2>Quick wins</h2></header>
         <ul class="quick" id="quick-mobile"></ul>
       </article>
     </section>
