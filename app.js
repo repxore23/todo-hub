@@ -35,7 +35,7 @@
   }
 
   // ---------- state ----------
-  const APP_VERSION = 'hub-v17';
+  const APP_VERSION = 'hub-v18';
   const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [] });
   const FB_TYPES = ['look', 'feature', 'issue', 'idea'];
   function normalizeFeedback(f) {
@@ -594,7 +594,7 @@ Turn the message into changes to the list.
   function setBarMode(m) {
     barMode = m; LS.set('hub.barMode', m);
     document.querySelectorAll('#bar .seg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === m)));
-    $('bar-input').placeholder = m === 'add' ? 'Add a task: lab report fri high BIOA01' : 'Tell Claude what changed, or ask about your list';
+    $('bar-input').placeholder = ''; // no placeholder text: the Add / Ask Claude switch already says what the bar does
     $('bar-input').setAttribute('aria-label', m === 'add' ? 'Add a task' : 'Ask Claude');
     $('bar-go').textContent = m === 'add' ? 'Add' : 'Ask';
     quickPreview(m === 'add' ? parseQuick($('bar-input').value) : { title: '' }, $('quick-preview'));
