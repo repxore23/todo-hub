@@ -38,7 +38,7 @@
   }
 
   // ---------- state ----------
-  const APP_VERSION = 'hub-v20';
+  const APP_VERSION = 'hub-v21';
   const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [] });
   const FB_TYPES = ['look', 'feature', 'issue', 'idea'];
   function normalizeFeedback(f) {
@@ -896,8 +896,15 @@ Turn the message into changes to the list.
     for (const [name, id] of [['Personal', 'soon-personal'], ['Admin', 'soon-admin']]) {
       const ul = $(id); ul.textContent = '';
       const list = items.filter((x) => sectionOf(x.category) === name);
-      if (!list.length) ul.append(el('li', 'empty', `Nothing ${name.toLowerCase()} in the next week.`));
+      // Errands and appointments often have no date: list them under "Anytime" so they never disappear.
+      const anytime = data.tasks.filter((x) => doable(x) && !x.due && !x.focus && sectionOf(x.category) === name
+        && (filterCat === 'all' || x.category === filterCat));
+      if (!list.length && !anytime.length) ul.append(el('li', 'empty', `Nothing ${name.toLowerCase()} in the next week.`));
       list.forEach((x) => ul.append(row(x, colors, true)));
+      if (anytime.length) {
+        ul.append(el('li', 'anytime-head', 'Anytime'));
+        anytime.forEach((x) => ul.append(row(x, colors, true)));
+      }
     }
   }
 
