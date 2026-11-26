@@ -94,9 +94,11 @@
     const w = window.innerWidth; const h = window.innerHeight;
     const bg = await backgroundCanvas(w, h);
     // Without rain (or without the engine), show the still picture behind the glass instead.
-    if (!rainOn || still || typeof window.RaindropFX !== 'function') {
+    // The Dark theme is plain near-black: no rain (it only shows up as smears on black).
+    const dark = document.documentElement.classList.contains('theme-dark');
+    if (!rainOn || still || dark || typeof window.RaindropFX !== 'function') {
       cv.hidden = true;
-      if (bg.custom) { glow.style.background = `center / cover no-repeat url(${bg.canvas.toDataURL('image/jpeg', 0.85)})`; }
+      if (bg.custom && !dark) { glow.style.background = `center / cover no-repeat url(${bg.canvas.toDataURL('image/jpeg', 0.85)})`; }
       else glow.style.background = '';
       return;
     }
@@ -134,6 +136,17 @@
     toggle.addEventListener('change', () => {
       rainOn = toggle.checked;
       try { localStorage.setItem('hub.rain', JSON.stringify(rainOn)); } catch { /* ignore */ }
+      startRain();
+    });
+  }
+  const theme = document.getElementById('theme-pick');
+  if (theme) {
+    theme.value = ls('hub.theme', 'fog') === 'dark' ? 'dark' : 'fog';
+    theme.addEventListener('change', () => {
+      const dark = theme.value === 'dark';
+      try { localStorage.setItem('hub.theme', JSON.stringify(theme.value)); } catch { /* ignore */ }
+      document.documentElement.classList.toggle('theme-dark', dark);
+      const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = dark ? '#0a0c09' : '#1d251a';
       startRain();
     });
   }

@@ -38,7 +38,7 @@
   }
 
   // ---------- state ----------
-  const APP_VERSION = 'hub-v25';
+  const APP_VERSION = 'hub-v27';
   const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [], log: [] });
   // Shared notes: short dated lines both Claudes (and the user) add so the other one has the context.
   const LOG_MAX = 60;
@@ -634,7 +634,7 @@ Turn the message into changes to the list.
     $('bar-input').placeholder = ''; // no placeholder text: the Add / Ask Claude switch already says what the bar does
     $('bar-input').setAttribute('aria-label', m === 'add' ? 'Add a task' : 'Ask Claude');
     $('bar-go').textContent = m === 'add' ? 'Add' : 'Ask';
-    quickPreview(m === 'add' ? parseQuick($('bar-input').value) : { title: '' }, $('quick-preview'));
+    quickPreview(m === 'add' ? parseMany($('bar-input').value) : [], $('quick-preview'));
   }
   function showReply(text, undo) {
     $('ask-reply').textContent = text;
@@ -750,6 +750,7 @@ Turn the message into changes to the list.
       $('onething-btn').setAttribute('aria-pressed', 'false'); $('onething-btn').textContent = 'One thing';
       ['dashboard', 'tasks', 'done'].forEach((v) => { $('view-' + v).hidden = v !== view; });
     }
+    renderJungle();
   }
 
   function renderSidebar(cats, colors) {
@@ -1501,71 +1502,230 @@ Turn the message into changes to the list.
     const d = parse(t); const diff = (want - d.getDay() + 7) % 7;
     return addDays(t, diff);
   }
+  // Everyday words for subjects, so "bio quiz fri" files under BIOA01 and "chem lab 6" under CHMA10.
+  const SUBJECT_WORDS = {
+    bio: ['bio', 'biol', 'biology'], chm: ['chem', 'chemistry', 'chm'], che: ['chem', 'chemistry'],
+    psy: ['psych', 'psyc', 'psychology', 'psy'], hlt: ['health', 'hlth', 'hlt'], mat: ['math', 'maths', 'calc', 'calculus'],
+    phy: ['physics', 'phys'], eng: ['english'], ant: ['anthro', 'anthropology'], soc: ['sociology', 'soci'],
+    eco: ['econ', 'economics'], sta: ['stats', 'statistics', 'stat'], csc: ['cs', 'compsci', 'coding', 'programming'],
+    his: ['history', 'hist'], phl: ['philosophy', 'philo'], pol: ['polisci', 'politics'], lin: ['linguistics', 'ling'],
+    fre: ['french'], nro: ['neuro', 'neuroscience'], ast: ['astro', 'astronomy'], env: ['enviro', 'environment'],
+  };
+  const PERSONAL_RE = /\b(shift|work(?:ing)?|dentist|doctor|doc|dr|appointment|appt|return|buy|pick ?up|groceries|grocery|laundry|gym|call|text|pay|rent|bank|haircut|clean|x-?ray|pharmacy|prescription|birthday|gift|package|parcel|amazon|car|oil change|mom|dad|psychiatrist|therapist|therapy|physio|optometrist|eye exam|vaccine|flu shot|blood ?work|passport|license|licence)\b/i;
+  const ADMIN_RE = /\b(acorn|e-?service|osap|tuition|fees?|registrar|enrol(?:l|ment)?|drop(?:ping)? (?:a |the |my )?(?:course|class)(?:es|s)?|withdraw|petition|transcript|exam conflict|deferr?al|accessibility|accommodation|financial aid|scholarship|bursary|residence|parking|t-?card|student card|course selection)\b/i;
+  // Abbreviations → how the rest of the list writes them.
+  const WORD_FIX = [
+    [/\bhw\s*#?(\d+)\b/gi, 'Homework $1'], [/\bhw\b/gi, 'homework'], [/\b(?:assn|asgn|assgn|assignmt)\s*#?(\d+)\b/gi, 'Assignment $1'], [/\b(?:assn|asgn|assgn|assignmt)\b/gi, 'assignment'],
+    [/\bpre[- ]?lab\b/gi, 'pre-lab'], [/\bpost[- ]?lab\b/gi, 'post-lab'], [/\btut\s*#?(\d+)\b/gi, 'Tutorial $1'], [/\btut\b/gi, 'tutorial'],
+    [/\blecs\b/gi, 'lectures'], [/\blec\s*#?(\d+)\b/gi, 'Lecture $1'], [/\blec\b/gi, 'lecture'], [/\blab\s*#?(\d+)\b/gi, 'Lab $1'], [/\bquiz\s*#?(\d+)\b/gi, 'Quiz $1'],
+    [/\bch\.?\s*(\d+)\b/gi, 'Ch $1'], [/\bmod(?:ule)?\s*(\d+)\b/gi, 'Module $1'], [/\bmidterm\b/gi, 'midterm'], [/\bappt\b/gi, 'appointment'],
+    [/\bx[- ]?ray\b/gi, 'X-ray'], [/\bdr\.?(?=\s)/gi, 'Dr.'], [/\bstemble\b/gi, 'Stemble'], [/\bmindtap\b/gi, 'MindTap'], [/\bachieve\b/gi, 'Achieve'],
+    [/\bpeer ?scholar\b/gi, 'peerScholar'], [/\bacorn\b/gi, 'ACORN'], [/\bquercus\b/gi, 'Quercus'], [/\be-?service\b/gi, 'eService'], [/\bosap\b/gi, 'OSAP'],
+    [/\btalk ?lab\b/gi, 'TalkLab'], [/\bamazon\b/gi, 'Amazon'], [/\bta\b/gi, 'TA'], [/\bta's\b/gi, "TA's"], [/\bprob(?:lem)? ?sets?\b/gi, 'problem set'], [/\b(\d{1,2})(?::(\d\d))?\s*(am|pm)\b/gi, (m, h, mm, ap) => `${h}${mm ? ':' + mm : ''} ${ap.toLowerCase()}`],
+  ];
+  const FILLER = /^(?:(?:ok(?:ay)?|so|um+|hey|yo|pls|please|add|todo|to-?do|task|new task|remember to|remind me to|reminder to|don'?t forget to|dont forget to|i (?:need|have|got|gotta|should|must|want) to|i gotta|need to|have to|gotta|got to|should|must|i must|i should|i need|make sure (?:to|i)|also)\s*[:,-]?\s+)+/i;
+  const EDGE = /^(?:\s|[-:,;.]|\b(?:on|for|by|at|due|the|this|next|before|in|and|to|is|it'?s|its|until|till)\b)+|(?:\s|[-:,;.]|\b(?:on|for|by|at|due|the|this|next|before|in|and|to|is|until|till)\b)+$/gi;
+
+  // Turns one line of everyday typing into a task that looks like the rest of the list.
   function parseQuick(raw) {
     const t = todayStr();
-    const out = { title: '', due: null, category: '', priority: 'med', dateKind: '', est: 0, repeat: '' };
-    let s = ` ${String(raw || '').trim()} `;
+    const out = { title: '', due: null, category: '', priority: 'med', dateKind: '', est: 0, repeat: '', kind: '' };
+    let s = ` ${String(raw || '').replace(/[–—]/g, '-').replace(/\s+/g, ' ').trim()} `;
     const take = (re, fn) => { s = s.replace(re, (...m) => { fn(...m); return ' '; }); };
-    const DATEWORD = '(?=\\s*(today|tonight|tomorrow|tmrw?|next|in\\s+\\d|mon|tue|wed|thu|fri|sat|sun|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\\d{1,2}[/ ]))';
+    const has = (re) => re.test(s);
+    let optional = false; let info = false; let shiftTimes = '';
+
+    // Work shifts: "work sat 8:30-5", "shift fri 5-10", "working 5 to 10 tmrw"
+    const TIME = '(\\d{1,2}(?::\\d\\d)?)\\s*(am|pm)?';
+    const timeRange = new RegExp(`\\b${TIME}\\s*(?:-|to|till|until)\\s*${TIME}\\b`, 'i');
+    if (/\b(shifts?|work(?:ing)?|closing|opening)\b/i.test(s) && (timeRange.test(s) || /\bshifts?\b/i.test(s))) {
+      out.kind = 'shift'; out.category = 'Personal';
+      take(timeRange, (_, a, ap1, b, ap2) => {
+        const hr = (x) => Number(String(x).split(':')[0]);
+        let p1 = ap1 && ap1.toLowerCase(); let p2 = ap2 && ap2.toLowerCase();
+        if (!p1 && !p2) {
+          if (hr(b) < hr(a) || hr(b) === 12) { p1 = 'am'; p2 = 'pm'; } // 8:30-5 → 8:30 am–5 pm
+          else if (hr(a) <= 7) { p2 = 'pm'; } // 5-10 → 5–10 pm
+          else { p2 = 'am'; } // 9-11 → 9–11 am
+        } else if (!p2) p2 = hr(b) < hr(a) ? (p1 === 'am' ? 'pm' : 'am') : p1;
+        shiftTimes = (p1 && p1 !== p2 ? `${a} ${p1}` : a) + '–' + `${b} ${p2}`;
+      });
+      take(/\b(?:(?:evening|morning|night|closing|opening)\s+)?(?:work(?:ing)?\s+)?shifts?\b|\bwork(?:ing)?\b|\bclosing\b|\bopening\b/gi, () => {});
+    }
+
+    // Repeats
     take(/\b(?:every|each)\s+(mon|tue|wed|thu|fri|sat|sun)[a-z]*\b/i, (_, d) => { out.repeat = 'weekly'; out.due = weekdayOnOrAfter(t, d); });
-    take(/\bweekly\b/i, () => { out.repeat = 'weekly'; });
-    take(new RegExp(`\\b(aim(?:\\s+for)?|by)\\s+${DATEWORD}`, 'i'), () => { out.dateKind = 'aim'; });
-    take(new RegExp(`\\bdue\\s+${DATEWORD}`, 'i'), () => { out.dateKind = 'due'; });
-    if (!out.due) {
-      take(/\b(today|tonight)\b/i, () => { out.due = t; });
-      take(/\b(tomorrow|tmrw?)\b/i, () => { out.due = addDays(t, 1); });
-      take(/\bnext week\b/i, () => { out.due = weekdayOnOrAfter(addDays(t, 1), 'mon'); });
-      take(/\bin\s+(\d{1,2})\s+days?\b/i, (_, n) => { out.due = addDays(t, Number(n)); });
-      take(/\bnext\s+(mon|tue|wed|thu|fri|sat|sun)[a-z]*\b/i, (_, d) => { out.due = addDays(weekdayOnOrAfter(t, d), 7); });
-      take(/\b(mon|tue|wed|thu|fri|sat|sun)(?:day|s|sday|nesday|rsday|urday)?\b/i, (_, d) => { if (!out.due) out.due = weekdayOnOrAfter(t, d); });
-      const md = (m, d) => {
-        const now = new Date(); let y = now.getFullYear();
-        let iso = `${y}-${pad(m)}-${pad(d)}`;
-        if (iso < addDays(t, -30)) iso = `${y + 1}-${pad(m)}-${pad(d)}`;
-        if (!out.due && m >= 1 && m <= 12 && d >= 1 && d <= 31) out.due = iso;
-      };
-      take(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b/i, (_, mo, d) => md(MON.indexOf(mo.toLowerCase()) + 1, Number(d)));
-      take(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i, (_, d, mo) => md(MON.indexOf(mo.toLowerCase()) + 1, Number(d)));
-      take(/\b(\d{1,2})\/(\d{1,2})\b/, (_, m, d) => md(Number(m), Number(d)));
+    take(/\b(?:weekly|every week|each week)\b/i, () => { out.repeat = 'weekly'; });
+
+    // Deadline vs own target
+    take(/\b(?:aim(?:ing)?(?:\s+(?:for|to))?|try(?:ing)? to|plan(?:ning)? to|hope to|want to|goal(?: is)?(?: to)?)\b/i, () => { out.dateKind = 'aim'; });
+    take(/\bdue\b/i, () => { if (!out.dateKind) out.dateKind = 'due'; });
+
+    // Dates
+    const md = (m, d) => {
+      if (out.due || !(m >= 1 && m <= 12 && d >= 1 && d <= 31)) return;
+      const y = Number(t.slice(0, 4));
+      let iso = `${y}-${pad(m)}-${pad(d)}`;
+      if (iso < addDays(t, -30)) iso = `${y + 1}-${pad(m)}-${pad(d)}`;
+      out.due = iso;
+    };
+    const setDue = (d) => { if (!out.due) out.due = d; };
+    take(/\b(?:the\s+)?day after (?:tomorrow|tmrw?|tmr)\b/i, () => setDue(addDays(t, 2)));
+    take(/\b(?:today|tonight|tonite|tn|this (?:morning|afternoon|evening)|now|asap)\b/i, (m) => { setDue(t); if (/asap/i.test(m)) out.priority = 'high'; });
+    take(/\b(?:tomorrow|tomorow|tmrw?|tmr|2moro|tmro)(?:\s+(?:morning|night|evening|afternoon))?\b/i, () => setDue(addDays(t, 1)));
+    take(/\b(?:end of (?:the )?week|eow|this week)\b/i, () => setDue(weekdayOnOrAfter(t, 'fri')));
+    take(/\b(?:this )?weekend\b/i, () => setDue(weekdayOnOrAfter(t, 'sat')));
+    take(/\bnext week\b/i, () => setDue(weekdayOnOrAfter(addDays(t, 1), 'mon')));
+    take(/\bin (?:a|1|one) week\b/i, () => setDue(addDays(t, 7)));
+    take(/\bin (\d{1,2}|two|three|four) weeks?\b/i, (_, n) => setDue(addDays(t, 7 * ({ two: 2, three: 3, four: 4 }[n] || Number(n)))));
+    take(/\bin (\d{1,2}|a|one|two|three|four|five|six|seven) days?\b/i, (_, n) => setDue(addDays(t, { a: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7 }[n] || Number(n))));
+    // "next wed" = the Wednesday of next week (Mon–Sun)
+    take(/\bnext\s+(mon|tue|wed|thu|fri|sat|sun)[a-z]*\b/i, (_, d) => setDue(weekdayOnOrAfter(weekdayOnOrAfter(addDays(t, 1), 'mon'), d)));
+    take(/\b(?:this\s+)?(mon|tues?|wed|weds|thu|thur|thurs|fri|sat|sun)(?:day|nesday|sday|urday)?s?\b(?!-)/i, (_, d) => setDue(weekdayOnOrAfter(t, d)));
+    take(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b/i, (_, mo, d) => md(MON.indexOf(mo.slice(0, 3).toLowerCase()) + 1, Number(d)));
+    take(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i, (_, d, mo) => md(MON.indexOf(mo.toLowerCase()) + 1, Number(d)));
+    take(/\b(\d{1,2})\/(\d{1,2})\b/, (_, m, d) => md(Number(m), Number(d)));
+    take(/\b(?:on\s+)?the\s+(\d{1,2})(?:st|nd|rd|th)\b/i, (_, d) => {
+      // "the 5th" = the next 5th of a month
+      const n = Number(d); let probe = t;
+      for (let i = 0; i < 62 && !out.due; i++) { if (Number(probe.slice(8)) === n) setDue(probe); probe = addDays(probe, 1); }
+    });
+
+    // How long it takes
+    take(/\b(?:takes?\s+|~\s*|about\s+)?(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours?)\b/i, (_, n) => { out.est = Math.round(Number(n) * 60); });
+    take(/\b(?:takes?\s+|~\s*|about\s+)?(\d+)\s*(?:m|min|mins|minutes)\b/i, (_, n) => { out.est = Number(n); });
+
+    // Priority / optional / info only
+    take(/(^|\s)(?:!{1,3}|high(?: priority)?|urgent|important|imp|asap|priority)(?=\s)/i, () => { out.priority = 'high'; });
+    take(/(^|\s)(?:low(?: priority)?|not urgent|whenever|no rush)(?=\s)/i, () => { out.priority = 'low'; });
+    take(/\(?\b(?:optional|if (?:i have )?time|maybe|might)\b\)?/i, () => { out.priority = 'low'; optional = true; });
+    take(/\(?\b(?:info only|fyi|heads up|just so i know)\b\)?/i, () => { info = true; });
+
+    // Course: #tag, course code, or everyday subject word
+    take(/#([\w/-]+)/, (_, c) => { if (!out.category) out.category = c; });
+    take(/\b([A-Za-z]{3,4}[A-Da-d]?\d{2})(?:[HhYy]\d)?\b/, (_, c) => { if (!out.category && /[a-z]{3}/i.test(c)) out.category = c.toUpperCase(); });
+    if (!out.category) {
+      const courses = categories().filter((c) => /^[A-Za-z]{3,4}[A-Da-d]?\d{2,3}$/.test(c));
+      outer: for (const c of courses) {
+        const letters = c.match(/^[A-Za-z]+/)[0].toLowerCase();
+        const words = [letters, letters.slice(0, 3), ...(SUBJECT_WORDS[letters.slice(0, 3)] || [])];
+        for (const w of [...new Set(words)].sort((a, b) => b.length - a.length)) {
+          const re = new RegExp(`(^|\\s)${w}(?:'?s)?(?=\\s)`, 'i');
+          if (re.test(s)) { out.category = c; s = s.replace(re, ' '); break outer; }
+        }
+      }
     }
-    take(/\b(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hours?)\b/i, (_, n) => { out.est = Math.round(Number(n) * 60); });
-    take(/\b(\d+)\s*(?:m|min|mins|minutes)\b/i, (_, n) => { out.est = Number(n); });
-    take(/(^|\s)(?:!+|high|urgent|important)(?=\s)/i, () => { out.priority = 'high'; });
-    take(/(^|\s)low(?:\s+priority)?(?=\s)/i, () => { out.priority = 'low'; });
-    take(/#([\w/-]+)/, (_, c) => { out.category = c; });
-    take(/\b([A-Za-z]{3}[A-Da-d]\d{2})\b/, (_, c) => { if (!out.category) out.category = c.toUpperCase(); });
-    for (const c of categories()) {
-      if (out.category) break;
-      const re = new RegExp(`(^|\\s)${c.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}(?=\\s)`, 'i');
-      if (re.test(s)) { out.category = c; s = s.replace(re, ' '); }
+    if (!out.category) {
+      const named = categories().find((c) => new RegExp(`(^|\\s)${c.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}(?=\\s)`, 'i').test(s));
+      if (named) { out.category = named; s = s.replace(new RegExp(`(^|\\s)${named.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}(?=\\s)`, 'i'), ' '); }
     }
-    const known = categories().find((c) => c.toLowerCase() === out.category.toLowerCase());
+    const cats = categories();
+    const known = cats.find((c) => c.toLowerCase() === out.category.toLowerCase());
     if (known) out.category = known;
-    out.title = s.replace(/\s+/g, ' ').trim();
+    // Learn from the list: a word only ever used under one course ("stemble" → CHMA10, "achieve" → BIOA01).
+    if (!out.category) {
+      const words = (s.toLowerCase().match(/[a-z][a-z-]{2,}/g) || []).filter((w) => !STOP_WORDS.has(w) && !['the', 'and', 'for', 'due', 'get', 'got', 'put', 'see', 'set', 'new', 'old', 'add'].includes(w));
+      for (const w of words) {
+        const re = new RegExp(`\\b${w.replace(/-/g, '\\-')}\\b`, 'i');
+        const seen = new Set(data.tasks.filter((x) => x.category && re.test(x.title)).map((x) => x.category));
+        if (seen.size === 1) { out.category = [...seen][0]; break; }
+      }
+    }
+    if (!out.category && ADMIN_RE.test(s)) out.category = cats.find((c) => /^admin$/i.test(c)) || 'Admin';
+    if (!out.category && PERSONAL_RE.test(s)) out.category = cats.find((c) => /^personal$/i.test(c)) || 'Personal';
+
+    // Title: drop filler, fix abbreviations, tidy edges
+    let title = s.replace(/\s+/g, ' ').trim();
+    title = title.replace(/\b(?:to|on|onto) (?:my )?(?:list|to-?do(?: list)?|todos?)\b\s*:?/i, ' ').replace(FILLER, '');
+    for (const [re, rep] of WORD_FIX) title = title.replace(re, rep);
+    title = title.replace(/\s+/g, ' ').replace(EDGE, '').replace(/\s+/g, ' ').trim();
+    // "do the bio assignment" → "Assignment"; keep the verb when it's the whole point ("do laundry" stays).
+    title = title.replace(/^(?:do|finish|complete|work on|get done|start on|start)\s+(?:the|my)\s+/i, '').replace(/^(?:the|my)\s+(?=\S+\s)/i, '');
+    // Spell words the way your list already does ("fsg" → "FSG", "genwell" → "GenWell").
+    const casing = listCasing();
+    title = title.replace(/[A-Za-z][A-Za-z-]+/g, (w) => (w === w.toLowerCase() && casing.has(w) ? casing.get(w) : w));
+
+    // Lecture catch-ups: "watch bio lectures 4-6" → "Catch-up: BIOA01 lectures 4–6" (a counter you tick through)
+    const lecRange = title.match(/\b(?:lectures?|L)\s*(\d{1,2})\s*(?:-|to|through|thru)\s*L?(\d{1,2})\b/i);
+    const lecCount = title.match(/\b(\d{1,2})\s+(?:lectures|recordings|videos)\b/i);
+    if ((lecRange || lecCount) && /\b(?:watch|catch(?:ing)?[- ]?up|behind|lectures?|recordings|videos)\b/i.test(title) && !/\bquiz|test|exam\b/i.test(title)) {
+      const who = out.category && !/^(personal|admin)$/i.test(out.category) ? out.category + ' ' : '';
+      title = lecRange ? `Catch-up: ${who}lectures ${lecRange[1]}–${lecRange[2]}` : `Catch-up: ${who}lectures (${lecCount[1]} recordings)`;
+      if (!out.dateKind) out.dateKind = 'aim';
+    }
+    // Exams read like the rest: "CHMA10 final exam", "BIOA01 midterm"
+    if (/^(?:the\s+)?(final(?: exam)?|exam|midterm(?: exam)?|term test(?: \d)?|test)$/i.test(title) && out.category && !/^(personal|admin)$/i.test(out.category)) {
+      title = `${out.category} ${/^final$/i.test(title) ? 'final exam' : title.toLowerCase().replace(/^the\s+/, '')}`;
+    }
+    if (out.kind === 'shift') title = `Work shift${shiftTimes ? ' ' + shiftTimes : ''}`;
+    if (optional && !/\(optional\)/i.test(title)) title += ' (optional)';
+    if (info && !/info only|last day/i.test(title)) title += ' (info only)';
+    // Capitalise the first letter, unless it's a word like "peerScholar" or "eService".
+    out.title = !title ? '' : /^[a-z]+[A-Z]/.test(title) ? title : title.charAt(0).toUpperCase() + title.slice(1);
     return out;
   }
+  const STOP_WORDS = new Set(['this', 'that', 'with', 'from', 'into', 'about', 'before', 'after', 'next', 'week', 'weeks', 'today', 'tomorrow', 'need', 'have', 'gotta', 'should', 'finish', 'start', 'work', 'study', 'review', 'quiz', 'quizzes', 'test', 'exam', 'final', 'homework', 'assignment', 'lecture', 'lectures', 'notes', 'reading', 'lab', 'labs', 'tutorial', 'submission', 'submit', 'phase', 'module', 'chapter', 'week', 'reflection', 'report', 'optional', 'info', 'only', 'catch-up', 'catch', 'make-up', 'email', 'upload', 'form', 'forms', 'data', 'sheet', 'questions', 'prep', 'practice', 'problem', 'problems', 'online', 'post-lab', 'pre-lab']);
+  // Words written with capitals somewhere in the list (FSG, GenWell, ACORN, Quercus…).
+  let casingCache = { n: -1, map: new Map() };
+  function listCasing() {
+    if (casingCache.n === data.tasks.length) return casingCache.map;
+    const map = new Map();
+    for (const x of data.tasks) for (const w of x.title.match(/[A-Za-z][A-Za-z-]+/g) || []) {
+      if (w !== w.toLowerCase() && w.slice(1) !== w.slice(1).toLowerCase()) map.set(w.toLowerCase(), w); // has capitals beyond the first letter
+    }
+    casingCache = { n: data.tasks.length, map };
+    return map;
+  }
+  // Several at once: one per line, or separated by ";".
+  const parseMany = (raw) => String(raw || '').split(/\s*(?:;|\n)\s*/).map(parseQuick).filter((p) => p.title);
+
+  // The live line under the bar shows exactly how it'll be filed, before Enter.
   function quickPreview(p, box) {
     box.textContent = '';
-    if (!p.title) return;
-    const bits = [];
-    if (p.due) bits.push(`${p.dateKind === 'aim' ? 'aim for' : 'due'} ${dueLabel(p.due)}`);
-    if (p.category) bits.push(p.category);
-    if (p.priority !== 'med') bits.push(p.priority === 'high' ? 'high priority' : 'low priority');
-    if (p.est) bits.push(`${fmtMin(p.est)}`);
-    if (p.repeat) bits.push('repeats weekly');
-    box.append(el('span', 'qp-title', `“${p.title}”`));
-    bits.forEach((b) => box.append(el('span', 'qp-chip', b)));
+    const list = Array.isArray(p) ? p : (p && p.title ? [p] : []);
+    if (!list.length) return;
+    const colors = colorMap();
+    list.slice(0, 4).forEach((q) => {
+      const row = el('div', 'qp-row');
+      const kind = q.kind || kindOf({ ...q, kind: '', total: 0, prog: 0, title: q.title });
+      const chip = (text, cls = '') => row.append(el('span', 'qp-chip' + cls, text));
+      row.append(el('span', 'qp-title', q.title));
+      if (q.category) {
+        const c = el('span', 'qp-chip qp-cat'); const sw = el('i', 'swatch'); sw.style.background = colors[q.category] || 'var(--muted)';
+        c.append(sw, q.category); row.append(c);
+      }
+      if (q.due) {
+        const t = todayStr();
+        const lbl = dueLabel(q.due);
+        const aim = q.dateKind === 'aim' || (!q.dateKind && isAim({ ...q, kind, total: 0, prog: 0 }));
+        chip(kind === 'class' ? `${classWord(q)} ${q.due === t ? 'today' : q.due === addDays(t, 1) ? 'tomorrow' : lbl}`
+          : kind === 'shift' || kind === 'reminder' ? lbl : aim ? `aim for ${lbl}` : `due ${lbl}`);
+      } else chip('no date', ' qp-soft');
+      const kindName = { class: classWord(q), shift: 'shift', reminder: 'reminder', progress: 'lecture counter', issue: 'to sort out' }[kind];
+      if (kindName) chip(kindName, ' qp-soft');
+      if (q.priority === 'high') chip('high priority');
+      if (q.est) chip(fmtMin(q.est), ' qp-soft');
+      if (q.repeat) chip('every week', ' qp-soft');
+      box.append(row);
+    });
+    if (list.length > 4) box.append(el('div', 'qp-more', `+ ${list.length - 4} more`));
   }
   function quickAdd(text) {
-    const p = parseQuick(text);
-    if (!p.title) return false;
-    const task = newTask({ title: p.title, due: p.due, category: p.category, priority: p.priority });
-    if (p.dateKind) task.dateKind = p.dateKind;
-    if (p.est) task.est = p.est;
-    if (p.repeat) task.repeat = p.repeat;
-    track('quickadd');
-    commit([{ type: 'add', task }]);
-    toast(`Added “${task.title}”${task.due ? ' · ' + dueLabel(task.due) : ''}`, 5000, [{ type: 'delete', id: task.id }]);
+    const list = parseMany(text);
+    if (!list.length) return false;
+    const ops = list.map((p) => {
+      const task = newTask({ title: p.title, due: p.due, category: p.category, priority: p.priority });
+      if (p.dateKind) task.dateKind = p.dateKind;
+      if (p.est) task.est = p.est;
+      if (p.repeat) task.repeat = p.repeat;
+      if (p.kind) task.kind = p.kind;
+      return { type: 'add', task };
+    });
+    track('quickadd', ops.length);
+    commit(ops);
+    const first = ops[0].task;
+    toast(ops.length > 1 ? `Added ${ops.length} tasks` : `Added “${first.title}”${first.due ? ' · ' + dueLabel(first.due) : ''}`, 5000,
+      ops.map((o) => ({ type: 'delete', id: o.task.id })));
     return true;
   }
 
@@ -1704,7 +1864,7 @@ Turn the message into changes to the list.
     if (pct >= 1) { const b = LS.get('hub.blooms', []); if (!b.includes(t)) LS.set('hub.blooms', [...b, t].slice(-400)); }
     return { mins, goal, pct, count: done.length };
   }
-  const stageName = (p) => (p >= 1 ? 'In bloom' : p >= 0.75 ? 'Budding' : p >= 0.4 ? 'Growing' : p > 0 ? 'Sprouting' : 'A seed, waiting');
+  const stageName = (p) => (p >= 1.6 ? 'Full jungle' : p >= 1.25 ? 'Overgrown' : p >= 1 ? 'In bloom' : p >= 0.75 ? 'Budding' : p >= 0.4 ? 'Growing' : p > 0 ? 'Sprouting' : 'A seed, waiting');
   function plantSVG(p, size) {
     const q = Math.min(1, p);
     const stem = 8 + q * 46;               // stem height
@@ -1734,6 +1894,173 @@ Turn the message into changes to the list.
     $('plant-big').innerHTML = plantSVG(g.pct, 96);
     $('one-progress').textContent = g.count ? `${stageName(g.pct)} · ${g.count} done today` : stageName(g.pct);
   }
+
+  // ---------- the jungle: in One thing mode the screen fills with plants as the day's work adds up ----------
+  // Corners first, then the edges, then it creeps toward the middle. Full jungle at JUNGLE_FULL × the daily goal.
+  // The layout is seeded by the date, so it stays put all day and is a little different tomorrow.
+  const JUNGLE_FULL = 1.6;
+  const jungleLevel = (p) => Math.max(0, Math.min(1, p / JUNGLE_FULL));
+  let jungleKey = '';
+  function seeded(str) {
+    let a = 0; for (const ch of str) a = (Math.imul(a, 31) + ch.charCodeAt(0)) >>> 0;
+    return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  }
+  function buildJungle(W, H, R) {
+    const GREENS = ['#4c7043', '#5b8550', '#6c9a5c', '#7fac69', '#97c07f'];
+    const DEEP = ['#2f4a2b', '#3a5a34', '#45683d'];
+    const VEIN = '#2a4026';
+    const FLOWERS = [['#ec9fb4', '#f7d27a'], ['#e7896a', '#f7d27a'], ['#f2c46b', '#e7896a'], ['#c99ad8', '#f7e6a0'], ['#f5f0e6', '#f2c46b']];
+    const pick = (arr) => arr[Math.floor(R() * arr.length)];
+    const f = (n) => n.toFixed(1);
+    const delay = (t) => `transition-delay:${f(t * 1.6)}s`;
+    // A leaf with its base at 0,0, pointing along +x.
+    const leaf = (len, wide, fill) => {
+      const w = len * wide;
+      return `<path d="M0 0C${f(len * 0.22)} ${f(-w)} ${f(len * 0.72)} ${f(-w * 1.05)} ${f(len)} 0C${f(len * 0.72)} ${f(w * 1.05)} ${f(len * 0.22)} ${f(w)} 0 0Z" fill="${fill}"/>`
+        + `<path d="M${f(len * 0.08)} 0Q${f(len * 0.5)} ${f(-w * 0.12)} ${f(len * 0.88)} 0" stroke="${VEIN}" stroke-opacity=".4" stroke-width="${f(Math.max(0.8, len / 28))}" fill="none" stroke-linecap="round"/>`
+        + `<path d="M${f(len * 0.2)} ${f(-w * 0.45)}Q${f(len * 0.45)} ${f(-w * 0.75)} ${f(len * 0.7)} ${f(-w * 0.5)}" stroke="#fff" stroke-opacity=".16" stroke-width="${f(Math.max(0.8, len / 30))}" fill="none" stroke-linecap="round"/>`;
+    };
+    const popLeaf = (x, y, deg, len, wide, fill, t) =>
+      `<g transform="translate(${f(x)} ${f(y)}) rotate(${f(deg)})"><g class="jp" data-t="${t.toFixed(3)}" style="transform-origin:0% 50%;${delay(t)}">${leaf(len, wide, fill)}</g></g>`;
+    const flower = (x, y, r, t) => {
+      const [petal, mid] = pick(FLOWERS); let s = '';
+      for (let k = 0; k < 5; k++) { const a = (k * 72 + R() * 10) * Math.PI / 180; s += `<ellipse cx="${f(Math.cos(a) * r * 0.7)}" cy="${f(Math.sin(a) * r * 0.7)}" rx="${f(r * 0.62)}" ry="${f(r * 0.42)}" transform="rotate(${f(a * 180 / Math.PI)} ${f(Math.cos(a) * r * 0.7)} ${f(Math.sin(a) * r * 0.7)})" fill="${petal}"/>`; }
+      s += `<circle r="${f(r * 0.34)}" fill="${mid}"/><circle r="${f(r * 0.14)}" cx="${f(-r * 0.08)}" cy="${f(-r * 0.08)}" fill="#fff" fill-opacity=".5"/>`;
+      return `<g transform="translate(${f(x)} ${f(y)})"><g class="jp" data-t="${t.toFixed(3)}" style="transform-origin:50% 50%;${delay(t)}">${s}</g></g>`;
+    };
+    // A vine as a wiggly line; returns its path and evenly spaced points along it.
+    const vinePath = (x0, y0, len, dir, amp, wav, ph, lean) => {
+      const pts = [];
+      for (let d = 0; d <= len; d += 6) pts.push([x0 + Math.sin(d / wav + ph) * amp + lean * d, y0 + dir * d, d / len]);
+      return { d: 'M' + pts.map((p) => `${f(p[0])} ${f(p[1])}`).join('L'), pts };
+    };
+    const vine = (x0, y0, len, dir, a, b, outward, width) => {
+      const amp = 5 + R() * 12, wav = 40 + R() * 40, ph = R() * 6, lean = (R() - 0.5) * 0.08;
+      const { d, pts } = vinePath(x0, y0, len, dir, amp, wav, ph, lean);
+      let s = `<path class="jv" pathLength="1" data-a="${a.toFixed(3)}" data-b="${b.toFixed(3)}" d="${d}" stroke="#3f5e37" stroke-width="${f(width)}" fill="none" stroke-linecap="round"/>`;
+      let side = R() < 0.5 ? 1 : -1;
+      for (let i = 3; i < pts.length; i += 3 + Math.floor(R() * 3)) {
+        const [x, y, frac] = pts[i];
+        const t = a + frac * (b - a) + 0.005;
+        side = -side;
+        const base = dir > 0 ? 90 : -90; // pointing along the vine's growth
+        const deg = base - side * (40 + R() * 35) * dir + (outward && side === outward ? 0 : 0);
+        const len2 = (13 + R() * 13) * (1 - frac * 0.25) * (width / 3);
+        s += popLeaf(x, y, deg, len2, 0.36 + R() * 0.12, pick(GREENS), t);
+        if (frac > 0.25 && R() < 0.1) s += flower(x + side * 6, y + dir * 4, 6 + R() * 4, Math.max(t, 0.45 + R() * 0.3));
+      }
+      return s;
+    };
+    let back = '', mid = '', front = '', hang = '', bugs = '';
+
+    // Vines hanging from the top: the ones near the sides come first and hang longest.
+    const nh = Math.max(7, Math.round(W / 55));
+    for (let i = 0; i < nh; i++) {
+      const u = (i + 0.2 + R() * 0.6) / nh;
+      const centre = 1 - Math.abs(u - 0.5) * 2; // 0 at the sides, 1 in the middle
+      const len = H * (0.62 - centre * 0.42) * (0.65 + R() * 0.5);
+      const a = 0.04 + centre * 0.45 + R() * 0.1;
+      const b = Math.min(0.99, a + 0.28 + R() * 0.15);
+      hang += `<g class="sway" style="animation-duration:${f(7 + R() * 6)}s;animation-delay:${f(-R() * 8)}s">${vine(u * W, -8, len, 1, a, b, 0, 2.4 + R() * 1.4)}</g>`;
+    }
+    // Leafy clumps along the top edge so the vines hang from something.
+    const nt = Math.max(8, Math.round(W / 55));
+    for (let i = 0; i < nt; i++) {
+      const u = (i + R()) / nt; const centre = 1 - Math.abs(u - 0.5) * 2;
+      const t = 0.02 + centre * 0.5 + R() * 0.1;
+      for (let k = 0; k < 6; k++) back += popLeaf(u * W + (R() - 0.5) * 50, -6 + R() * 8, 20 + R() * 140, 34 + R() * 40 * (1 - centre * 0.4), 0.34, pick(DEEP), t + k * 0.02);
+    }
+    // Vines climbing the left and right edges from the bottom.
+    for (const sideX of [0, 1]) {
+      for (let k = 0; k < 2; k++) {
+        const x0 = sideX ? W - 14 - k * 34 - R() * 16 : 14 + k * 34 + R() * 16;
+        const a = 0.08 + k * 0.12 + R() * 0.08;
+        mid += vine(x0, H + 8, H * (0.55 + R() * 0.35), -1, a, Math.min(0.97, a + 0.45), 0, 3 + R());
+      }
+    }
+    // Big tropical plants rising from the bottom: fan leaves, ferns and tall grassy leaves.
+    // Two rows: a taller back row, then a dense front row of shorter plants.
+    const nb = Math.max(9, Math.round(W / 42));
+    const plants = [];
+    for (const row of [0, 1]) {
+      for (let i = 0; i < nb; i++) {
+        const u = (i + 0.1 + R() * 0.8) / nb;
+        const centre = 1 - Math.abs(u - 0.5) * 2;
+        plants.push({ u, centre, row, t: 0.01 + centre * 0.6 + R() * 0.14 + row * 0.04 });
+      }
+    }
+    plants.sort((p, q) => p.row - q.row || q.t - p.t); // back row first, later ones behind
+    for (const p of plants) {
+      const x = p.u * W; const h = H * (p.row ? 0.08 + (1 - p.centre) * 0.16 : 0.16 + (1 - p.centre) * 0.3) * (0.7 + R() * 0.5); const t = p.t;
+      const type = R(); let s = '';
+      if (type < 0.4) {
+        // fan / monstera-ish: a stem and lobes spread from its tip
+        const tipX = x + (R() - 0.5) * h * 0.4, tipY = H - h;
+        s += `<path d="M${f(x)} ${f(H + 6)}Q${f(x + (tipX - x) * 0.2)} ${f(H - h * 0.5)} ${f(tipX)} ${f(tipY)}" stroke="#4a6b40" stroke-width="${f(3 + h / 90)}" fill="none" stroke-linecap="round"/>`;
+        const lobes = 6 + Math.floor(R() * 3); const col = pick(GREENS);
+        for (let k = 0; k < lobes; k++) {
+          const deg = -170 + (160 * (k + 0.5)) / lobes + (R() - 0.5) * 8;
+          const L = h * (0.42 + Math.sin(((k + 0.5) / lobes) * Math.PI) * 0.28);
+          s += `<g transform="translate(${f(tipX)} ${f(tipY)}) rotate(${f(deg)})">${leaf(L, 0.2, col)}</g>`;
+        }
+      } else if (type < 0.7) {
+        // fern: an arching stem with little leaflets both sides
+        const fronds = 3 + Math.floor(R() * 2);
+        for (let k = 0; k < fronds; k++) {
+          const lean = (k - (fronds - 1) / 2) * 0.55 + (R() - 0.5) * 0.3; const L = h * (0.8 + R() * 0.4);
+          const ex = x + Math.sin(lean) * L, ey = H - Math.cos(lean) * L * 0.9;
+          const cx = x + Math.sin(lean) * L * 0.3, cy = H - L * 0.75;
+          s += `<path d="M${f(x)} ${f(H + 6)}Q${f(cx)} ${f(cy)} ${f(ex)} ${f(ey)}" stroke="#4a6b40" stroke-width="2.2" fill="none" stroke-linecap="round"/>`;
+          const col = pick(GREENS);
+          for (let j = 2; j < 14; j++) {
+            const q = j / 14; const bx = (1 - q) * (1 - q) * x + 2 * (1 - q) * q * cx + q * q * ex; const by = (1 - q) * (1 - q) * (H + 6) + 2 * (1 - q) * q * cy + q * q * ey;
+            const tx = 2 * (1 - q) * (cx - x) + 2 * q * (ex - cx), ty = 2 * (1 - q) * (cy - H - 6) + 2 * q * (ey - cy);
+            const ang = Math.atan2(ty, tx) * 180 / Math.PI; const ll = (1 - q * 0.75) * L * 0.16;
+            s += `<g transform="translate(${f(bx)} ${f(by)}) rotate(${f(ang - 60)})">${leaf(ll, 0.32, col)}</g><g transform="translate(${f(bx)} ${f(by)}) rotate(${f(ang + 60)})">${leaf(ll, 0.32, col)}</g>`;
+          }
+        }
+      } else {
+        // tall leaves, like a banana plant or a big lily
+        const n = 3 + Math.floor(R() * 3);
+        for (let k = 0; k < n; k++) {
+          const deg = -90 + (k - (n - 1) / 2) * (18 + R() * 10); const L = h * (0.85 + R() * 0.35);
+          s += `<g transform="translate(${f(x)} ${f(H + 10)}) rotate(${f(deg)})">${leaf(L, 0.14 + R() * 0.06, pick(k % 2 ? GREENS : DEEP))}</g>`;
+        }
+        if (R() < 0.5) s += flower(x + (R() - 0.5) * 20, H - h * 0.9, 8 + R() * 4, Math.min(0.99, t + 0.2));
+      }
+      front += `<g class="jr" data-t="${t.toFixed(3)}" style="${delay(t)}">${s}</g>`;
+    }
+    // Fireflies once it's properly lush.
+    for (let i = 0; i < Math.round(W / 90); i++) {
+      const t = 0.7 + R() * 0.28;
+      bugs += `<circle class="jf" data-t="${t.toFixed(3)}" cx="${f(R() * W)}" cy="${f(H * (0.25 + R() * 0.65))}" r="${f(1.8 + R() * 1.4)}" style="animation-duration:${f(5 + R() * 6)}s;animation-delay:${f(-R() * 6)}s"/>`;
+    }
+    return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${back}${mid}${hang}${front}${bugs}</svg>`;
+  }
+  function renderJungle() {
+    const box = $('jungle'); if (!box) return;
+    if (!oneMode) { box.hidden = true; return; }
+    const W = Math.round(window.innerWidth), H = Math.round(window.innerHeight);
+    const key = `${todayStr()}|${W}x${H}`;
+    const fresh = box.hidden || key !== jungleKey;
+    if (key !== jungleKey) { jungleKey = key; box.innerHTML = buildJungle(W, H, seeded(todayStr())); }
+    box.hidden = false;
+    if (fresh) { // start bare so it grows in when you open One thing
+      box.querySelectorAll('.on').forEach((n) => n.classList.remove('on'));
+      box.querySelectorAll('.jv').forEach((v) => { v.style.strokeDashoffset = '1'; });
+      box.getBoundingClientRect();
+    }
+    const lush = jungleLevel(growth().pct);
+    requestAnimationFrame(() => {
+      box.querySelectorAll('[data-t]').forEach((n) => n.classList.toggle('on', lush >= Number(n.dataset.t)));
+      box.querySelectorAll('.jv').forEach((v) => {
+        const a = Number(v.dataset.a), b = Number(v.dataset.b);
+        v.style.strokeDashoffset = String(1 - Math.max(0, Math.min(1, (lush - a) / (b - a))));
+      });
+    });
+  }
+  let jungleTimer = 0;
+  window.addEventListener('resize', () => { clearTimeout(jungleTimer); jungleTimer = setTimeout(() => { if (oneMode) renderJungle(); }, 200); });
 
   // ---------- One thing mode ----------
   // A switch: the dashboard becomes one card with the single best next task. Done / Not now / Skip it.
@@ -1933,7 +2260,7 @@ Turn the message into changes to the list.
   $('log-text').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addLogFromInput(); } });
 
   // ---------- wire up ----------
-  $('bar-input').addEventListener('input', (e) => { if (barMode === 'add') quickPreview(parseQuick(e.target.value), $('quick-preview')); });
+  $('bar-input').addEventListener('input', (e) => { if (barMode === 'add') quickPreview(parseMany(e.target.value), $('quick-preview')); });
   document.querySelectorAll('#bar .seg button').forEach((b) => { b.onclick = () => { setBarMode(b.dataset.mode); $('bar-input').focus(); }; });
   $('bar').addEventListener('submit', (e) => {
     e.preventDefault();

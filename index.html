@@ -14,10 +14,12 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="styles.css">
+<script>try { if (JSON.parse(localStorage.getItem('hub.theme')) === 'dark') { document.documentElement.classList.add('theme-dark'); document.querySelector('meta[name="theme-color"]').content = '#0a0c09'; } } catch (e) { /* default theme */ }</script>
 </head>
 <body>
 <div class="glow" aria-hidden="true"></div>
 <canvas id="rain" aria-hidden="true"></canvas>
+<div class="jungle" id="jungle" aria-hidden="true" hidden></div>
 
 <div class="app">
   <!-- Sidebar (desktop) -->
@@ -231,6 +233,11 @@
 
     <section class="set-block">
       <h3>Look</h3>
+      <label for="theme-pick">Theme</label>
+      <select id="theme-pick">
+        <option value="fog">Foggy sage</option>
+        <option value="dark">Dark (no rain)</option>
+      </select>
       <label class="toggle" for="rain-toggle"><input type="checkbox" id="rain-toggle"> Rain on the window (turn off to save battery)</label>
       <label for="rain-level">Rain amount</label>
       <select id="rain-level">

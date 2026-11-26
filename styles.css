@@ -57,6 +57,37 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 }
 #rain { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; pointer-events: none; }
 
+/* Dark theme (Settings → Look): near-black, no fog, quiet panels */
+html.theme-dark {
+  --bg: #0a0c09;
+  --bg-2: #111410;
+  --glass: rgba(255, 255, 255, 0.03);
+  --glass-2: rgba(255, 255, 255, 0.07);
+  --stroke: rgba(255, 255, 255, 0.08);
+  --stroke-2: rgba(255, 255, 255, 0.15);
+  --muted: #aab1a3;
+  --faint: #7b8375;
+}
+html.theme-dark .glow { background: radial-gradient(90vw 50vh at 50% -10%, rgba(140, 160, 125, 0.07), transparent 70%), #0a0c09; }
+html.theme-dark .glow::after { display: none; }
+html.theme-dark .onething-btn { background: rgba(255, 255, 255, 0.04); }
+
+/* One thing mode: the jungle that grows as you finish things */
+.jungle { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
+.jungle[hidden] { display: none; }
+.jungle svg { display: block; width: 100%; height: 100%; filter: drop-shadow(0 6px 14px rgba(6, 10, 5, 0.35)); }
+.jungle .jp { transform: scale(0); transform-box: fill-box; transition: transform 1.3s cubic-bezier(0.2, 0.9, 0.3, 1.25); }
+.jungle .jp.on { transform: scale(1); }
+.jungle .jv { stroke-dasharray: 1 1; stroke-dashoffset: 1; transition: stroke-dashoffset 2.4s cubic-bezier(0.3, 0.7, 0.3, 1); }
+.jungle .jr { transform: translateY(105%) scaleY(0.5); transform-box: fill-box; transform-origin: 50% 100%; transition: transform 1.8s cubic-bezier(0.2, 0.9, 0.3, 1.1); }
+.jungle .jr.on { transform: none; }
+.jungle .sway { transform-box: fill-box; transform-origin: 50% 0%; animation: jungle-sway 9s ease-in-out infinite alternate; }
+.jungle .jf { fill: #f6efb0; opacity: 0; filter: drop-shadow(0 0 4px #f6efb0); transition: opacity 2s; animation: jungle-float 8s ease-in-out infinite alternate; }
+.jungle .jf.on { opacity: 0.85; }
+@keyframes jungle-sway { from { transform: rotate(-1.4deg); } to { transform: rotate(1.4deg); } }
+@keyframes jungle-float { from { transform: translate(-10px, 6px); } to { transform: translate(12px, -14px); } }
+@media (prefers-reduced-motion: reduce) { .jungle .sway, .jungle .jf { animation: none; } }
+
 .app { display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); min-height: 100vh; }
 
 /* ---------- Sidebar ---------- */
@@ -294,10 +325,14 @@ body.one-mode .chips { display: none; }
 .quickadd input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; padding: 6px 0; }
 .quickadd input::placeholder { color: var(--faint); }
 .quickadd:focus-within { box-shadow: inset 0 0 0 1px var(--violet); }
-.qa-preview { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding-left: 22px; }
+.qa-preview { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; padding-left: 22px; }
 .qa-preview:empty { display: none; }
-.qp-title { font-size: 13px; color: var(--ink); }
-.qp-chip { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--glass-2); color: var(--violet-2); }
+.qp-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.qp-title { font-size: 13.5px; font-weight: 600; color: var(--ink); margin-right: 4px; }
+.qp-chip { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--glass-2); color: var(--violet-2); display: inline-flex; align-items: center; gap: 5px; }
+.qp-chip.qp-cat { color: var(--ink); }
+.qp-chip.qp-soft { background: transparent; color: var(--faint); box-shadow: inset 0 0 0 1px var(--stroke); }
+.qp-more { font-size: 12px; color: var(--faint); }
 
 /* Date chips + quick date menu */
 .date-chip { all: unset; cursor: pointer; border-radius: 6px; padding: 0 3px; margin: 0 -3px; }
