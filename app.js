@@ -38,7 +38,7 @@
   }
 
   // ---------- state ----------
-  const APP_VERSION = 'hub-v27';
+  const APP_VERSION = 'hub-v29';
   const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [], log: [] });
   // Shared notes: short dated lines both Claudes (and the user) add so the other one has the context.
   const LOG_MAX = 60;
@@ -750,7 +750,6 @@ Turn the message into changes to the list.
       $('onething-btn').setAttribute('aria-pressed', 'false'); $('onething-btn').textContent = 'One thing';
       ['dashboard', 'tasks', 'done'].forEach((v) => { $('view-' + v).hidden = v !== view; });
     }
-    renderJungle();
   }
 
   function renderSidebar(cats, colors) {
@@ -1841,8 +1840,10 @@ Turn the message into changes to the list.
   // Finished work (by estimated minutes) grows it toward a daily goal; it blooms at the goal and resets each morning.
   // No streaks, nothing lost: the Done page just counts blooms.
   const doneValue = (x) => Math.min(120, Math.max(15, kindOf(x) === 'progress' ? 60 : (x.est || estMinutes({ ...x, kind: 'task' }) || 30)));
+  // The plant's day runs 5 am to 5 am, so late-night work counts toward the day you were still up for.
+  const plantDay = (ms = Date.now()) => fmt(new Date(ms - 5 * 3600 * 1000));
   function addGrowth(min) {
-    const t = todayStr(); const g = LS.get('hub.growth', { date: t, extra: 0 });
+    const t = plantDay(); const g = LS.get('hub.growth', { date: t, extra: 0 });
     LS.set('hub.growth', { date: t, extra: Math.max(0, (g.date === t ? g.extra : 0) + min) });
   }
   function shiftMinutes(x) {
@@ -1854,9 +1855,9 @@ Turn the message into changes to the list.
     return Math.max(60, Math.round((b - a) * 60));
   }
   function growth() {
-    const t = todayStr();
+    const t = plantDay();
     const g = LS.get('hub.growth', { date: t, extra: 0 });
-    const done = data.tasks.filter((x) => x.done && !x.skipped && x.doneAt && fmt(new Date(x.doneAt)) === t && !EVENT_KINDS.includes(kindOf(x)));
+    const done = data.tasks.filter((x) => x.done && !x.skipped && x.doneAt && plantDay(x.doneAt) === t && !EVENT_KINDS.includes(kindOf(x)));
     const mins = done.reduce((a, x) => a + doneValue(x), 0) + (g.date === t ? g.extra : 0);
     const working = data.tasks.some((x) => isShift(x) && x.due === t && !x.off);
     const goal = working ? 60 : 120;
@@ -1864,7 +1865,7 @@ Turn the message into changes to the list.
     if (pct >= 1) { const b = LS.get('hub.blooms', []); if (!b.includes(t)) LS.set('hub.blooms', [...b, t].slice(-400)); }
     return { mins, goal, pct, count: done.length };
   }
-  const stageName = (p) => (p >= 1.6 ? 'Full jungle' : p >= 1.25 ? 'Overgrown' : p >= 1 ? 'In bloom' : p >= 0.75 ? 'Budding' : p >= 0.4 ? 'Growing' : p > 0 ? 'Sprouting' : 'A seed, waiting');
+  const stageName = (p) => (p >= 1 ? 'In bloom' : p >= 0.75 ? 'Budding' : p >= 0.4 ? 'Growing' : p > 0 ? 'Sprouting' : 'A seed, waiting');
   function plantSVG(p, size) {
     const q = Math.min(1, p);
     const stem = 8 + q * 46;               // stem height
@@ -1894,173 +1895,6 @@ Turn the message into changes to the list.
     $('plant-big').innerHTML = plantSVG(g.pct, 96);
     $('one-progress').textContent = g.count ? `${stageName(g.pct)} · ${g.count} done today` : stageName(g.pct);
   }
-
-  // ---------- the jungle: in One thing mode the screen fills with plants as the day's work adds up ----------
-  // Corners first, then the edges, then it creeps toward the middle. Full jungle at JUNGLE_FULL × the daily goal.
-  // The layout is seeded by the date, so it stays put all day and is a little different tomorrow.
-  const JUNGLE_FULL = 1.6;
-  const jungleLevel = (p) => Math.max(0, Math.min(1, p / JUNGLE_FULL));
-  let jungleKey = '';
-  function seeded(str) {
-    let a = 0; for (const ch of str) a = (Math.imul(a, 31) + ch.charCodeAt(0)) >>> 0;
-    return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-  }
-  function buildJungle(W, H, R) {
-    const GREENS = ['#4c7043', '#5b8550', '#6c9a5c', '#7fac69', '#97c07f'];
-    const DEEP = ['#2f4a2b', '#3a5a34', '#45683d'];
-    const VEIN = '#2a4026';
-    const FLOWERS = [['#ec9fb4', '#f7d27a'], ['#e7896a', '#f7d27a'], ['#f2c46b', '#e7896a'], ['#c99ad8', '#f7e6a0'], ['#f5f0e6', '#f2c46b']];
-    const pick = (arr) => arr[Math.floor(R() * arr.length)];
-    const f = (n) => n.toFixed(1);
-    const delay = (t) => `transition-delay:${f(t * 1.6)}s`;
-    // A leaf with its base at 0,0, pointing along +x.
-    const leaf = (len, wide, fill) => {
-      const w = len * wide;
-      return `<path d="M0 0C${f(len * 0.22)} ${f(-w)} ${f(len * 0.72)} ${f(-w * 1.05)} ${f(len)} 0C${f(len * 0.72)} ${f(w * 1.05)} ${f(len * 0.22)} ${f(w)} 0 0Z" fill="${fill}"/>`
-        + `<path d="M${f(len * 0.08)} 0Q${f(len * 0.5)} ${f(-w * 0.12)} ${f(len * 0.88)} 0" stroke="${VEIN}" stroke-opacity=".4" stroke-width="${f(Math.max(0.8, len / 28))}" fill="none" stroke-linecap="round"/>`
-        + `<path d="M${f(len * 0.2)} ${f(-w * 0.45)}Q${f(len * 0.45)} ${f(-w * 0.75)} ${f(len * 0.7)} ${f(-w * 0.5)}" stroke="#fff" stroke-opacity=".16" stroke-width="${f(Math.max(0.8, len / 30))}" fill="none" stroke-linecap="round"/>`;
-    };
-    const popLeaf = (x, y, deg, len, wide, fill, t) =>
-      `<g transform="translate(${f(x)} ${f(y)}) rotate(${f(deg)})"><g class="jp" data-t="${t.toFixed(3)}" style="transform-origin:0% 50%;${delay(t)}">${leaf(len, wide, fill)}</g></g>`;
-    const flower = (x, y, r, t) => {
-      const [petal, mid] = pick(FLOWERS); let s = '';
-      for (let k = 0; k < 5; k++) { const a = (k * 72 + R() * 10) * Math.PI / 180; s += `<ellipse cx="${f(Math.cos(a) * r * 0.7)}" cy="${f(Math.sin(a) * r * 0.7)}" rx="${f(r * 0.62)}" ry="${f(r * 0.42)}" transform="rotate(${f(a * 180 / Math.PI)} ${f(Math.cos(a) * r * 0.7)} ${f(Math.sin(a) * r * 0.7)})" fill="${petal}"/>`; }
-      s += `<circle r="${f(r * 0.34)}" fill="${mid}"/><circle r="${f(r * 0.14)}" cx="${f(-r * 0.08)}" cy="${f(-r * 0.08)}" fill="#fff" fill-opacity=".5"/>`;
-      return `<g transform="translate(${f(x)} ${f(y)})"><g class="jp" data-t="${t.toFixed(3)}" style="transform-origin:50% 50%;${delay(t)}">${s}</g></g>`;
-    };
-    // A vine as a wiggly line; returns its path and evenly spaced points along it.
-    const vinePath = (x0, y0, len, dir, amp, wav, ph, lean) => {
-      const pts = [];
-      for (let d = 0; d <= len; d += 6) pts.push([x0 + Math.sin(d / wav + ph) * amp + lean * d, y0 + dir * d, d / len]);
-      return { d: 'M' + pts.map((p) => `${f(p[0])} ${f(p[1])}`).join('L'), pts };
-    };
-    const vine = (x0, y0, len, dir, a, b, outward, width) => {
-      const amp = 5 + R() * 12, wav = 40 + R() * 40, ph = R() * 6, lean = (R() - 0.5) * 0.08;
-      const { d, pts } = vinePath(x0, y0, len, dir, amp, wav, ph, lean);
-      let s = `<path class="jv" pathLength="1" data-a="${a.toFixed(3)}" data-b="${b.toFixed(3)}" d="${d}" stroke="#3f5e37" stroke-width="${f(width)}" fill="none" stroke-linecap="round"/>`;
-      let side = R() < 0.5 ? 1 : -1;
-      for (let i = 3; i < pts.length; i += 3 + Math.floor(R() * 3)) {
-        const [x, y, frac] = pts[i];
-        const t = a + frac * (b - a) + 0.005;
-        side = -side;
-        const base = dir > 0 ? 90 : -90; // pointing along the vine's growth
-        const deg = base - side * (40 + R() * 35) * dir + (outward && side === outward ? 0 : 0);
-        const len2 = (13 + R() * 13) * (1 - frac * 0.25) * (width / 3);
-        s += popLeaf(x, y, deg, len2, 0.36 + R() * 0.12, pick(GREENS), t);
-        if (frac > 0.25 && R() < 0.1) s += flower(x + side * 6, y + dir * 4, 6 + R() * 4, Math.max(t, 0.45 + R() * 0.3));
-      }
-      return s;
-    };
-    let back = '', mid = '', front = '', hang = '', bugs = '';
-
-    // Vines hanging from the top: the ones near the sides come first and hang longest.
-    const nh = Math.max(7, Math.round(W / 55));
-    for (let i = 0; i < nh; i++) {
-      const u = (i + 0.2 + R() * 0.6) / nh;
-      const centre = 1 - Math.abs(u - 0.5) * 2; // 0 at the sides, 1 in the middle
-      const len = H * (0.62 - centre * 0.42) * (0.65 + R() * 0.5);
-      const a = 0.04 + centre * 0.45 + R() * 0.1;
-      const b = Math.min(0.99, a + 0.28 + R() * 0.15);
-      hang += `<g class="sway" style="animation-duration:${f(7 + R() * 6)}s;animation-delay:${f(-R() * 8)}s">${vine(u * W, -8, len, 1, a, b, 0, 2.4 + R() * 1.4)}</g>`;
-    }
-    // Leafy clumps along the top edge so the vines hang from something.
-    const nt = Math.max(8, Math.round(W / 55));
-    for (let i = 0; i < nt; i++) {
-      const u = (i + R()) / nt; const centre = 1 - Math.abs(u - 0.5) * 2;
-      const t = 0.02 + centre * 0.5 + R() * 0.1;
-      for (let k = 0; k < 6; k++) back += popLeaf(u * W + (R() - 0.5) * 50, -6 + R() * 8, 20 + R() * 140, 34 + R() * 40 * (1 - centre * 0.4), 0.34, pick(DEEP), t + k * 0.02);
-    }
-    // Vines climbing the left and right edges from the bottom.
-    for (const sideX of [0, 1]) {
-      for (let k = 0; k < 2; k++) {
-        const x0 = sideX ? W - 14 - k * 34 - R() * 16 : 14 + k * 34 + R() * 16;
-        const a = 0.08 + k * 0.12 + R() * 0.08;
-        mid += vine(x0, H + 8, H * (0.55 + R() * 0.35), -1, a, Math.min(0.97, a + 0.45), 0, 3 + R());
-      }
-    }
-    // Big tropical plants rising from the bottom: fan leaves, ferns and tall grassy leaves.
-    // Two rows: a taller back row, then a dense front row of shorter plants.
-    const nb = Math.max(9, Math.round(W / 42));
-    const plants = [];
-    for (const row of [0, 1]) {
-      for (let i = 0; i < nb; i++) {
-        const u = (i + 0.1 + R() * 0.8) / nb;
-        const centre = 1 - Math.abs(u - 0.5) * 2;
-        plants.push({ u, centre, row, t: 0.01 + centre * 0.6 + R() * 0.14 + row * 0.04 });
-      }
-    }
-    plants.sort((p, q) => p.row - q.row || q.t - p.t); // back row first, later ones behind
-    for (const p of plants) {
-      const x = p.u * W; const h = H * (p.row ? 0.08 + (1 - p.centre) * 0.16 : 0.16 + (1 - p.centre) * 0.3) * (0.7 + R() * 0.5); const t = p.t;
-      const type = R(); let s = '';
-      if (type < 0.4) {
-        // fan / monstera-ish: a stem and lobes spread from its tip
-        const tipX = x + (R() - 0.5) * h * 0.4, tipY = H - h;
-        s += `<path d="M${f(x)} ${f(H + 6)}Q${f(x + (tipX - x) * 0.2)} ${f(H - h * 0.5)} ${f(tipX)} ${f(tipY)}" stroke="#4a6b40" stroke-width="${f(3 + h / 90)}" fill="none" stroke-linecap="round"/>`;
-        const lobes = 6 + Math.floor(R() * 3); const col = pick(GREENS);
-        for (let k = 0; k < lobes; k++) {
-          const deg = -170 + (160 * (k + 0.5)) / lobes + (R() - 0.5) * 8;
-          const L = h * (0.42 + Math.sin(((k + 0.5) / lobes) * Math.PI) * 0.28);
-          s += `<g transform="translate(${f(tipX)} ${f(tipY)}) rotate(${f(deg)})">${leaf(L, 0.2, col)}</g>`;
-        }
-      } else if (type < 0.7) {
-        // fern: an arching stem with little leaflets both sides
-        const fronds = 3 + Math.floor(R() * 2);
-        for (let k = 0; k < fronds; k++) {
-          const lean = (k - (fronds - 1) / 2) * 0.55 + (R() - 0.5) * 0.3; const L = h * (0.8 + R() * 0.4);
-          const ex = x + Math.sin(lean) * L, ey = H - Math.cos(lean) * L * 0.9;
-          const cx = x + Math.sin(lean) * L * 0.3, cy = H - L * 0.75;
-          s += `<path d="M${f(x)} ${f(H + 6)}Q${f(cx)} ${f(cy)} ${f(ex)} ${f(ey)}" stroke="#4a6b40" stroke-width="2.2" fill="none" stroke-linecap="round"/>`;
-          const col = pick(GREENS);
-          for (let j = 2; j < 14; j++) {
-            const q = j / 14; const bx = (1 - q) * (1 - q) * x + 2 * (1 - q) * q * cx + q * q * ex; const by = (1 - q) * (1 - q) * (H + 6) + 2 * (1 - q) * q * cy + q * q * ey;
-            const tx = 2 * (1 - q) * (cx - x) + 2 * q * (ex - cx), ty = 2 * (1 - q) * (cy - H - 6) + 2 * q * (ey - cy);
-            const ang = Math.atan2(ty, tx) * 180 / Math.PI; const ll = (1 - q * 0.75) * L * 0.16;
-            s += `<g transform="translate(${f(bx)} ${f(by)}) rotate(${f(ang - 60)})">${leaf(ll, 0.32, col)}</g><g transform="translate(${f(bx)} ${f(by)}) rotate(${f(ang + 60)})">${leaf(ll, 0.32, col)}</g>`;
-          }
-        }
-      } else {
-        // tall leaves, like a banana plant or a big lily
-        const n = 3 + Math.floor(R() * 3);
-        for (let k = 0; k < n; k++) {
-          const deg = -90 + (k - (n - 1) / 2) * (18 + R() * 10); const L = h * (0.85 + R() * 0.35);
-          s += `<g transform="translate(${f(x)} ${f(H + 10)}) rotate(${f(deg)})">${leaf(L, 0.14 + R() * 0.06, pick(k % 2 ? GREENS : DEEP))}</g>`;
-        }
-        if (R() < 0.5) s += flower(x + (R() - 0.5) * 20, H - h * 0.9, 8 + R() * 4, Math.min(0.99, t + 0.2));
-      }
-      front += `<g class="jr" data-t="${t.toFixed(3)}" style="${delay(t)}">${s}</g>`;
-    }
-    // Fireflies once it's properly lush.
-    for (let i = 0; i < Math.round(W / 90); i++) {
-      const t = 0.7 + R() * 0.28;
-      bugs += `<circle class="jf" data-t="${t.toFixed(3)}" cx="${f(R() * W)}" cy="${f(H * (0.25 + R() * 0.65))}" r="${f(1.8 + R() * 1.4)}" style="animation-duration:${f(5 + R() * 6)}s;animation-delay:${f(-R() * 6)}s"/>`;
-    }
-    return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${back}${mid}${hang}${front}${bugs}</svg>`;
-  }
-  function renderJungle() {
-    const box = $('jungle'); if (!box) return;
-    if (!oneMode) { box.hidden = true; return; }
-    const W = Math.round(window.innerWidth), H = Math.round(window.innerHeight);
-    const key = `${todayStr()}|${W}x${H}`;
-    const fresh = box.hidden || key !== jungleKey;
-    if (key !== jungleKey) { jungleKey = key; box.innerHTML = buildJungle(W, H, seeded(todayStr())); }
-    box.hidden = false;
-    if (fresh) { // start bare so it grows in when you open One thing
-      box.querySelectorAll('.on').forEach((n) => n.classList.remove('on'));
-      box.querySelectorAll('.jv').forEach((v) => { v.style.strokeDashoffset = '1'; });
-      box.getBoundingClientRect();
-    }
-    const lush = jungleLevel(growth().pct);
-    requestAnimationFrame(() => {
-      box.querySelectorAll('[data-t]').forEach((n) => n.classList.toggle('on', lush >= Number(n.dataset.t)));
-      box.querySelectorAll('.jv').forEach((v) => {
-        const a = Number(v.dataset.a), b = Number(v.dataset.b);
-        v.style.strokeDashoffset = String(1 - Math.max(0, Math.min(1, (lush - a) / (b - a))));
-      });
-    });
-  }
-  let jungleTimer = 0;
-  window.addEventListener('resize', () => { clearTimeout(jungleTimer); jungleTimer = setTimeout(() => { if (oneMode) renderJungle(); }, 200); });
 
   // ---------- One thing mode ----------
   // A switch: the dashboard becomes one card with the single best next task. Done / Not now / Skip it.

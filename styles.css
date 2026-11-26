@@ -72,21 +72,6 @@ html.theme-dark .glow { background: radial-gradient(90vw 50vh at 50% -10%, rgba(
 html.theme-dark .glow::after { display: none; }
 html.theme-dark .onething-btn { background: rgba(255, 255, 255, 0.04); }
 
-/* One thing mode: the jungle that grows as you finish things */
-.jungle { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; }
-.jungle[hidden] { display: none; }
-.jungle svg { display: block; width: 100%; height: 100%; filter: drop-shadow(0 6px 14px rgba(6, 10, 5, 0.35)); }
-.jungle .jp { transform: scale(0); transform-box: fill-box; transition: transform 1.3s cubic-bezier(0.2, 0.9, 0.3, 1.25); }
-.jungle .jp.on { transform: scale(1); }
-.jungle .jv { stroke-dasharray: 1 1; stroke-dashoffset: 1; transition: stroke-dashoffset 2.4s cubic-bezier(0.3, 0.7, 0.3, 1); }
-.jungle .jr { transform: translateY(105%) scaleY(0.5); transform-box: fill-box; transform-origin: 50% 100%; transition: transform 1.8s cubic-bezier(0.2, 0.9, 0.3, 1.1); }
-.jungle .jr.on { transform: none; }
-.jungle .sway { transform-box: fill-box; transform-origin: 50% 0%; animation: jungle-sway 9s ease-in-out infinite alternate; }
-.jungle .jf { fill: #f6efb0; opacity: 0; filter: drop-shadow(0 0 4px #f6efb0); transition: opacity 2s; animation: jungle-float 8s ease-in-out infinite alternate; }
-.jungle .jf.on { opacity: 0.85; }
-@keyframes jungle-sway { from { transform: rotate(-1.4deg); } to { transform: rotate(1.4deg); } }
-@keyframes jungle-float { from { transform: translate(-10px, 6px); } to { transform: translate(12px, -14px); } }
-@media (prefers-reduced-motion: reduce) { .jungle .sway, .jungle .jf { animation: none; } }
 
 .app { display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr); min-height: 100vh; }
 
