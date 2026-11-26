@@ -38,7 +38,7 @@
   }
 
   // ---------- state ----------
-  const APP_VERSION = 'hub-v31';
+  const APP_VERSION = 'hub-v32';
   const emptyData = () => ({ app: 'todo-hub', version: 1, updatedAt: 0, tasks: [], processedNotes: [], feedback: [], log: [] });
   // Shared notes: short dated lines both Claudes (and the user) add so the other one has the context.
   const LOG_MAX = 60;

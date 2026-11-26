@@ -64,21 +64,29 @@
   // ---------- rain ----------
   // Exactly what the "Raindrops - Doomer" Wallpaper Engine wallpaper runs: its own engine file
   // (raindrop-wallpaper.js) with the engine's defaults. Of the wallpaper's saved settings, Wallpaper Engine only
-  // ever applies the first few (a bug in the wallpaper's script stops the rest), and the only ones that differ
-  // from the defaults are a blur of 2 and the dark mist. "Like the wallpaper" is exactly that.
+  // ever applies the first few (a bug in the wallpaper's script stops the rest), and the only one that differs
+  // from the defaults is a blur of 2. "Like the wallpaper" is exactly that.
   // Light / Medium only thin out the rain.
   const LEVELS = { light: 0.45, medium: 0.7, heavy: 1 };
   // Same pixel sizes as the wallpaper on the desktop (not scaled down to the window).
   function rainOptions() {
     const amt = LEVELS[ls('hub.rainLevel', 'heavy')] || 1;
-    const opts = { backgroundBlurSteps: 2, mistColor: [0.10196078431372549, 0.10196078431372549, 0.10196078431372549, 1] };
+    // Wallpaper Engine applies only the blur: the wallpaper's script then crashes on its mist colour (a text value
+    // it tries to .push() onto), so the desktop keeps the engine's default mist. Setting that colour here made it pale.
+    const opts = { backgroundBlurSteps: 2 };
     if (amt !== 1) { opts.dropletsPerSeconds = Math.round(500 * amt); opts.spawnInterval = [0.1 / amt, 0.1 / amt]; }
     return opts;
   }
+  // Only one rain engine may ever run. Two at once (e.g. a resize while the first was still loading) both
+  // draw on the same canvas and step the drops twice per frame: that's the streaky, blotchy look.
+  let runId = 0;
   async function startRain() {
     stopRain();
-    const w = window.innerWidth; const h = window.innerHeight;
+    const id = ++runId;
+    cv.hidden = false; // measure the canvas itself (the page's scrollbar makes it a bit narrower than the window)
+    const w = cv.clientWidth || window.innerWidth; const h = cv.clientHeight || window.innerHeight;
     const bg = await backgroundCanvas(w, h);
+    if (id !== runId) return; // a newer start took over while this one was loading
     // Without rain (or without the engine), show the still picture behind the glass instead.
     // The Dark theme is plain near-black: no rain (it only shows up as smears on black).
     const dark = document.documentElement.classList.contains('theme-dark');
@@ -92,27 +100,41 @@
     cv.width = w; cv.height = h;
     try {
       // Like the wallpaper, hand the engine the picture itself; without one, the built-in fog.
-      fx = new window.RaindropFX({ canvas: cv, background: bg.custom ? bgUrl : bg.canvas, ...rainOptions() });
-      fx.start();
+      const me = new window.RaindropFX({ canvas: cv, background: bg.custom ? bgUrl : bg.canvas, ...rainOptions() });
+      fx = me;
+      runEngine(me);
       glow.style.visibility = 'hidden'; // the rain canvas now draws the picture itself
     } catch {
       cv.hidden = true; fx = null; glow.style.visibility = '';
     }
   }
+  // start() loads assets before its loop begins, so stop() can come too early to catch it:
+  // once it's going, stop it straight away if it has been replaced or paused meanwhile.
+  function runEngine(me) {
+    me.running = true;
+    Promise.resolve(me.start()).then(() => { if (fx !== me || !me.running) { try { me.stop(); } catch { /* ignore */ } } }).catch(() => {});
+  }
   function stopRain() {
-    if (fx) { try { fx.stop && fx.stop(); } catch { /* ignore */ } fx = null; }
+    runId++;
+    if (fx) { fx.running = false; try { fx.stop && fx.stop(); } catch { /* ignore */ } fx = null; }
     glow.style.visibility = '';
   }
 
+  // Resize the way the wallpaper does: same engine, new size.
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      startRain(); // restart so the drops are re-scaled to the new window size
+      if (fx && fx.running) { const w = cv.clientWidth, h = cv.clientHeight; cv.width = w; cv.height = h; try { fx.resize(w, h); } catch { startRain(); } }
+      else startRain();
     }, 250);
   });
+  // Pause while the app is hidden; resume exactly one loop when it's back.
   document.addEventListener('visibilitychange', () => {
     if (!fx) return;
-    try { if (document.hidden) fx.stop && fx.stop(); else fx.start(); } catch { /* ignore */ }
+    try {
+      if (document.hidden) { if (fx.running) { fx.running = false; fx.stop(); } }
+      else if (!fx.running) runEngine(fx);
+    } catch { /* ignore */ }
   });
 
   // ---------- Settings ----------
