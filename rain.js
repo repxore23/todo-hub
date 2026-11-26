@@ -68,25 +68,12 @@
   // from the defaults are a blur of 2 and the dark mist. "Like the wallpaper" is exactly that.
   // Light / Medium only thin out the rain.
   const LEVELS = { light: 0.45, medium: 0.7, heavy: 1 };
-  // Scaled to the window, so the app shows the same pattern as the full-screen wallpaper, just smaller:
-  // drop sizes, distances and speed shrink with the window's width vs. the monitor's, and the number of
-  // drops with its area. (At full screen, s = 1 and it's the wallpaper's own numbers.)
-  function rainOptions(w, h) {
+  // Same pixel sizes as the wallpaper on the desktop (not scaled down to the window).
+  function rainOptions() {
     const amt = LEVELS[ls('hub.rainLevel', 'heavy')] || 1;
-    const sw = (window.screen && screen.width) || w, sh = (window.screen && screen.height) || h;
-    const s = Math.min(1, Math.max(0.25, w / sw)); const area = Math.min(1, (w * h) / (sw * sh));
-    return {
-      backgroundBlurSteps: 2,
-      mistColor: [0.10196078431372549, 0.10196078431372549, 0.10196078431372549, 1],
-      // the engine's defaults, scaled
-      spawnSize: [60 * s, 100 * s],
-      dropletSize: [10 * s, 30 * s],
-      trailDistance: [20 * s, 30 * s],
-      gravity: 2400 * s,
-      dropletsPerSeconds: Math.round(500 * area * amt),
-      spawnLimit: Math.max(200, Math.round(2000 * area * amt)),
-      spawnInterval: [0.1 / (area * amt), 0.1 / (area * amt)],
-    };
+    const opts = { backgroundBlurSteps: 2, mistColor: [0.10196078431372549, 0.10196078431372549, 0.10196078431372549, 1] };
+    if (amt !== 1) { opts.dropletsPerSeconds = Math.round(500 * amt); opts.spawnInterval = [0.1 / amt, 0.1 / amt]; }
+    return opts;
   }
   async function startRain() {
     stopRain();
@@ -105,7 +92,7 @@
     cv.width = w; cv.height = h;
     try {
       // Like the wallpaper, hand the engine the picture itself; without one, the built-in fog.
-      fx = new window.RaindropFX({ canvas: cv, background: bg.custom ? bgUrl : bg.canvas, ...rainOptions(w, h) });
+      fx = new window.RaindropFX({ canvas: cv, background: bg.custom ? bgUrl : bg.canvas, ...rainOptions() });
       fx.start();
       glow.style.visibility = 'hidden'; // the rain canvas now draws the picture itself
     } catch {

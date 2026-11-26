@@ -1,6 +1,6 @@
 // Offline support: keeps the app's own files cached so it opens without internet.
 // Bump VERSION whenever you change the app files.
-const VERSION = 'hub-v30';
+const VERSION = 'hub-v31';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'rain.js', 'raindrop-wallpaper.js', 'config.js', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {

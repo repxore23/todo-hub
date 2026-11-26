@@ -576,3 +576,9 @@ select option { background: #1a2017; }
   .editor { grid-template-columns: 1fr 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* Clear glass: panels barely blur, so the wallpaper (rain and fog) looks the same behind them as around them.
+   A slightly darker tint keeps text readable instead. (Last in the file so it wins.) */
+.side, .card, .bar, .quickadd, .onething-btn { backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
+.card { background: rgba(14, 19, 12, 0.36); }
+.side { background: rgba(16, 21, 14, 0.34); }
