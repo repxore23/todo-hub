@@ -50,44 +50,43 @@
         return { canvas: c, custom: true };
       } catch { /* fall back to fog */ }
     }
+    // Kept fairly even top to bottom: each drop shows a flipped view of the picture behind it, so a fog that
+    // goes pale-to-black made every drop near the top look like a black speck.
     const lin = g.createLinearGradient(0, 0, 0, h);
-    [[0, '#6a7b61'], [0.28, '#5c6d54'], [0.5, '#4a5a43'], [0.68, '#2e3a2a'], [0.84, '#182016'], [1, '#0f140d']].forEach(([o, col]) => lin.addColorStop(o, col));
+    [[0, '#66765d'], [0.5, '#56664e'], [1, '#3c4936']].forEach(([o, col]) => lin.addColorStop(o, col));
     g.fillStyle = lin; g.fillRect(0, 0, w, h);
     const rad = g.createRadialGradient(w / 2, -h * 0.05, 0, w / 2, -h * 0.05, Math.max(w, h) * 0.7);
-    rad.addColorStop(0, 'rgba(170,186,158,0.35)'); rad.addColorStop(1, 'rgba(170,186,158,0)');
+    rad.addColorStop(0, 'rgba(170,186,158,0.18)'); rad.addColorStop(1, 'rgba(170,186,158,0)');
     g.fillStyle = rad; g.fillRect(0, 0, w, h);
     return { canvas: c, custom: false };
   }
 
   // ---------- rain ----------
-  // Tuned to look like the desktop wallpaper at app-window size: fewer, finer drops, no dark mist patches.
-  // (A desktop wallpaper is 2-3× wider than the app window, so the same pixel sizes look much heavier here.)
-  // Based on the wallpaper's own settings, scaled to the window: the desktop is ~2× wider than the app,
-  // so the same pixel-sized drops looked twice as heavy here. Rain amount (Light/Medium/Heavy) is in Settings.
-  const LEVELS = { light: 0.45, medium: 0.75, heavy: 1.1 };
-  function rainOptions(w) {
-    const s = Math.min(1, Math.max(0.4, w / 2200));                 // drop size vs. a desktop-width wallpaper
-    const amt = LEVELS[ls('hub.rainLevel', 'medium')] || LEVELS.medium; // how much rain
-    const base = {
+  // Exactly what the "Raindrops - Doomer" Wallpaper Engine wallpaper runs: its own engine file
+  // (raindrop-wallpaper.js) with the engine's defaults. Of the wallpaper's saved settings, Wallpaper Engine only
+  // ever applies the first few (a bug in the wallpaper's script stops the rest), and the only ones that differ
+  // from the defaults are a blur of 2 and the dark mist. "Like the wallpaper" is exactly that.
+  // Light / Medium only thin out the rain.
+  const LEVELS = { light: 0.45, medium: 0.7, heavy: 1 };
+  // Scaled to the window, so the app shows the same pattern as the full-screen wallpaper, just smaller:
+  // drop sizes, distances and speed shrink with the window's width vs. the monitor's, and the number of
+  // drops with its area. (At full screen, s = 1 and it's the wallpaper's own numbers.)
+  function rainOptions(w, h) {
+    const amt = LEVELS[ls('hub.rainLevel', 'heavy')] || 1;
+    const sw = (window.screen && screen.width) || w, sh = (window.screen && screen.height) || h;
+    const s = Math.min(1, Math.max(0.25, w / sw)); const area = Math.min(1, (w * h) / (sw * sh));
+    return {
       backgroundBlurSteps: 2,
-      backgroundWrapMode: 'clamp',
-      mist: true,
-      mistBlurStep: 4,
-      mistColor: [0.30, 0.34, 0.27, 1], // lighter, greener than the wallpaper's near-black mist, so the top isn't dark
-      mistTime: 18,
-      dropletsPerSeconds: Math.round(500 * s * amt),
+      mistColor: [0.10196078431372549, 0.10196078431372549, 0.10196078431372549, 1],
+      // the engine's defaults, scaled
+      spawnSize: [60 * s, 100 * s],
       dropletSize: [10 * s, 30 * s],
-      evaporate: 10,
-      gravity: 2400,
-      raindropCompose: 'smoother',
-      refractBase: 0.4,
-      refractScale: 0.6,
-      slipRate: 0.1,
-      spawnInterval: [1 / amt, 1 / amt],
-      spawnSize: [Math.max(0.45, s), Math.max(0.55, s * 1.1)],
-      spawnLimit: Math.round((w < 860 ? 900 : 2000) * s * amt),
+      trailDistance: [20 * s, 30 * s],
+      gravity: 2400 * s,
+      dropletsPerSeconds: Math.round(500 * area * amt),
+      spawnLimit: Math.max(200, Math.round(2000 * area * amt)),
+      spawnInterval: [0.1 / (area * amt), 0.1 / (area * amt)],
     };
-    return { ...base, ...ls('hub.rainCfg', {}) }; // optional per-device overrides (for tuning)
   }
   async function startRain() {
     stopRain();
@@ -105,7 +104,8 @@
     cv.hidden = false;
     cv.width = w; cv.height = h;
     try {
-      fx = new window.RaindropFX({ canvas: cv, background: bg.canvas, ...rainOptions(w) });
+      // Like the wallpaper, hand the engine the picture itself; without one, the built-in fog.
+      fx = new window.RaindropFX({ canvas: cv, background: bg.custom ? bgUrl : bg.canvas, ...rainOptions(w, h) });
       fx.start();
       glow.style.visibility = 'hidden'; // the rain canvas now draws the picture itself
     } catch {
@@ -120,8 +120,7 @@
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      if (fx && typeof fx.resize === 'function') { cv.width = innerWidth; cv.height = innerHeight; fx.resize(innerWidth, innerHeight); }
-      else startRain();
+      startRain(); // restart so the drops are re-scaled to the new window size
     }, 250);
   });
   document.addEventListener('visibilitychange', () => {
@@ -152,7 +151,7 @@
   }
   const level = document.getElementById('rain-level');
   if (level) {
-    level.value = ls('hub.rainLevel', 'medium');
+    level.value = ls('hub.rainLevel', 'heavy');
     level.addEventListener('change', () => {
       try { localStorage.setItem('hub.rainLevel', JSON.stringify(level.value)); } catch { /* ignore */ }
       startRain();
